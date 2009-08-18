@@ -27,6 +27,11 @@ THE SOFTWARE.
 -->
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:p="/lib/hudson/project">
   <p:config-disableBuild/>
+  
+  <f:entry title="Template" description="Name of template project">
+  	<f:textbox name="templateProjectName" value="${it.templateProjectName}"/>
+  </f:entry>
+  
   <j:if test="${app.CONCURRENT_BUILD}">
     <f:optionalBlock field="concurrentBuild" title="${%Execute concurrent builds if necessary (beta)}" />
   </j:if>

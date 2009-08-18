@@ -181,6 +181,8 @@ public abstract class AbstractProject<P extends AbstractProject<P,R>,R extends A
     protected transient /*final*/ List<Action> transientActions = new Vector<Action>();
 
     private boolean concurrentBuild;
+    
+    private String templateProjectName;
 
     protected AbstractProject(ItemGroup parent, String name) {
         super(parent,name);
@@ -291,8 +293,20 @@ public abstract class AbstractProject<P extends AbstractProject<P,R>,R extends A
             return ((AbstractProject) this.getParent()).getRootProject();
         }
     }
+	
+	public P getTemplateProject() {
+		return (templateProjectName != null) ? (P) Hudson.getInstance().getItem(templateProjectName) : null;
+	}
+	
+    public String getTemplateProjectName() {
+		return templateProjectName;
+	}
 
-    /**
+	public void setTemplateProjectName(String templateProjectName) {
+		this.templateProjectName = templateProjectName;
+	}
+
+	/**
      * Gets the directory where the module is checked out.
      *
      * @return
@@ -476,7 +490,9 @@ public abstract class AbstractProject<P extends AbstractProject<P,R>,R extends A
 
     @Override
     public void doConfigSubmit( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException, FormException {
-        super.doConfigSubmit(req,rsp);
+    	templateProjectName = Util.fixEmpty(req.getParameter("templateProjectName"));
+
+    	super.doConfigSubmit(req,rsp);
 
         Set<AbstractProject> upstream = Collections.emptySet();
         if(req.getParameter("pseudoUpstreamTrigger")!=null) {

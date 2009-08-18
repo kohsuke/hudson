@@ -48,6 +48,7 @@ import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -832,6 +833,21 @@ public class Util {
         for (Collection<? extends T> item : items)
             r.addAll(item);
         return r;
+    }
+    
+    /**
+     * Combines all the 
+     * @param <K>
+     * @param <V>
+     * @param items
+     * @return
+     */
+    public static <K,V> Map<K,V> join(Map<K,V>... items) {
+    	HashMap<K, V> result = new HashMap<K, V>();
+    	for (Map<K, V> item : items) {
+    		result.putAll(item);
+		}
+    	return result;
     }
 
     /**

@@ -43,6 +43,7 @@ import org.kohsuke.stapler.StaplerResponse;
 
 import javax.servlet.ServletException;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -99,7 +100,44 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     public List<Builder> getBuilders() {
         return builders.toList();
     }
+    
+    public List<Builder> getTemplateBuilders() {
+    	Project<?,?> templateProject = getTemplateProject();
+    	if (templateProject == null) {
+    		return Collections.emptyList();
+    	} else {
+    		return getTemplateProject().getBuilders();
+    	}
+    }
+    
+    public List<Builder> getAllBuilders() {
+    	return Util.join(getTemplateBuilders(), getBuilders());
+    }
+    
+    public Map<Descriptor<Publisher>,Publisher> getTemplatePublishers() {
+    	Project<?,?> templateProject = getTemplateProject();
+    	if (templateProject == null) {
+    		return Collections.emptyMap();
+    	} else {
+    		return getTemplateProject().getPublishers();
+    	}
+    }
+    public Map<Descriptor<Publisher>,Publisher> getAllPublishers() {
+        return Util.join(getTemplatePublishers(), getPublishers());
+    }
 
+    public Map<Descriptor<BuildWrapper>,BuildWrapper> getTemplateBuildWrappers() {
+    	Project<?,?> templateProject = getTemplateProject();
+    	if (templateProject == null) {
+    		return Collections.emptyMap();
+    	} else {
+    		return getTemplateProject().getBuildWrappers();
+    	}
+    }
+    public Map<Descriptor<BuildWrapper>,BuildWrapper> getAllBuildWrappers() {
+        return Util.join(getTemplateBuildWrappers(), getBuildWrappers());
+    }
+    
     public Map<Descriptor<Publisher>,Publisher> getPublishers() {
         return publishers.toMap();
     }
@@ -108,6 +146,14 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
         return builders;
     }
     
+    public DescribableList<Publisher,Descriptor<Publisher>> getAllPublishersList() {
+    	Project<?,?> templateProject = getTemplateProject();
+    	if (templateProject == null) {
+    		return new DescribableList<Publisher, Descriptor<Publisher>>(Saveable.NOOP);
+    	} else {
+    		return getTemplateProject().getPublishersList();
+    	}
+    }
     public DescribableList<Publisher,Descriptor<Publisher>> getPublishersList() {
         return publishers;
     }
@@ -120,6 +166,7 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     protected Set<ResourceActivity> getResourceActivities() {
         final Set<ResourceActivity> activities = new HashSet<ResourceActivity>();
 
+        if (getTemplateProject() != null) activities.addAll(getTemplateProject().getResourceActivities());
         activities.addAll(super.getResourceActivities());
         activities.addAll(Util.filter(builders,ResourceActivity.class));
         activities.addAll(Util.filter(publishers,ResourceActivity.class));
