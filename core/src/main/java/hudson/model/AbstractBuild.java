@@ -37,6 +37,7 @@ import hudson.model.listeners.SCMListener;
 import hudson.scm.CVSChangeLogParser;
 import hudson.scm.ChangeLogParser;
 import hudson.scm.ChangeLogSet;
+import hudson.scm.NullSCM;
 import hudson.scm.ChangeLogSet.Entry;
 import hudson.scm.SCM;
 import hudson.scm.NullChangeLogParser;
@@ -396,8 +397,18 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
                 // in case check out fails and leaves a broken changelog.xml behind.
                 // see http://www.nabble.com/CVSChangeLogSet.parse-yields-SAXParseExceptions-when-parsing-bad-*AccuRev*-changelog.xml-files-td22213663.html
                 AbstractBuild.this.scm = new NullChangeLogParser();
+                
+                AbstractProject<?,?> p = project;
+            	System.out.println(p);
+            	System.out.println(p.getScm());
+            	System.out.println(p.getTemplateProjectName());
+                while ((p.getScm() == null || p.getScm() instanceof NullSCM) && p.getTemplateProject() != null) {
+                	System.out.println(p);
+                	System.out.println(p.getScm());
+                	p = p.getTemplateProject();
+                }
 
-                if(project.checkout(AbstractBuild.this,launcher,listener,new File(getRootDir(),"changelog.xml"))) {
+                if(p.checkout(AbstractBuild.this,launcher,listener,new File(getRootDir(),"changelog.xml"))) {
                     // check out worked
                     SCM scm = project.getScm();
 

@@ -29,6 +29,7 @@ import hudson.tasks.BuildStep;
 import hudson.tasks.BuildTrigger;
 import hudson.tasks.BuildWrapper;
 import hudson.tasks.Builder;
+import hudson.tasks.Publisher;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 
 /**
@@ -76,13 +78,17 @@ public abstract class Build <P extends Project<P,B>,B extends Build<P,B>>
     
     protected class RunnerImpl extends AbstractRunner {
         protected Result doRun(BuildListener listener) throws Exception {
-            if(!preBuild(listener,project.getBuilders()))
+            List<Builder> builders = project.getAllBuilders();
+            Map<Descriptor<Publisher>, Publisher> publishers = project.getAllPublishers();
+            Collection<BuildWrapper> buildWrappers = project.getAllBuildWrappers().values();
+
+            if(!preBuild(listener,builders))
                 return Result.FAILURE;
-            if(!preBuild(listener,project.getPublishers()))
+			if(!preBuild(listener,publishers))
                 return Result.FAILURE;
 
             try {
-                List<BuildWrapper> wrappers = new ArrayList<BuildWrapper>(project.getBuildWrappers().values());
+				List<BuildWrapper> wrappers = new ArrayList<BuildWrapper>(buildWrappers);
                 
                 ParametersAction parameters = getAction(ParametersAction.class);
                 if (parameters != null)
@@ -95,7 +101,7 @@ public abstract class Build <P extends Project<P,B>,B extends Build<P,B>>
                     buildEnvironments.add(e);
                 }
 
-                if(!build(listener,project.getBuilders()))
+                if(!build(listener,builders))
                     return Result.FAILURE;
             } finally {
                 // tear down in reverse order
@@ -120,7 +126,7 @@ public abstract class Build <P extends Project<P,B>,B extends Build<P,B>>
         protected Launcher createLauncher(BuildListener listener) throws IOException, InterruptedException {
             Launcher l = super.createLauncher(listener);
 
-            for(BuildWrapper bw : project.getBuildWrappers().values())
+            for(BuildWrapper bw : project.getAllBuildWrappers().values())
                 l = bw.decorateLauncher(Build.this,l,listener);
 
             buildEnvironments = new ArrayList<Environment>();
@@ -143,14 +149,14 @@ public abstract class Build <P extends Project<P,B>,B extends Build<P,B>>
         }
 
         public void post2(BuildListener listener) throws IOException, InterruptedException {
-            performAllBuildStep(listener, project.getPublishers(),true);
+            performAllBuildStep(listener, project.getAllPublishers(),true);
             performAllBuildStep(listener, project.getProperties(),true);
         }
 
         public void cleanUp(BuildListener listener) throws Exception {
-            performAllBuildStep(listener, project.getPublishers(),false);
+            performAllBuildStep(listener, project.getAllPublishers(),false);
             performAllBuildStep(listener, project.getProperties(),false);
-            BuildTrigger.execute(Build.this,listener, project.getPublishersList().get(BuildTrigger.class));
+            BuildTrigger.execute(Build.this,listener, project.getAllPublishersList().get(BuildTrigger.class));
         }
 
         private boolean build(BuildListener listener, Collection<Builder> steps) throws IOException, InterruptedException {
