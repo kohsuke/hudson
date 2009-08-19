@@ -106,12 +106,12 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     	if (templateProject == null) {
     		return Collections.emptyList();
     	} else {
-    		return getTemplateProject().getBuilders();
+    		return getTemplateProject().getAllBuilders();
     	}
     }
     
     public List<Builder> getAllBuilders() {
-    	return Util.join(getTemplateBuilders(), getBuilders());
+        return Util.join(getTemplateBuilders(), getBuilders());
     }
     
     public Map<Descriptor<Publisher>,Publisher> getTemplatePublishers() {
@@ -119,7 +119,7 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     	if (templateProject == null) {
     		return Collections.emptyMap();
     	} else {
-    		return getTemplateProject().getPublishers();
+    		return getTemplateProject().getAllPublishers();
     	}
     }
     public Map<Descriptor<Publisher>,Publisher> getAllPublishers() {
@@ -131,7 +131,7 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     	if (templateProject == null) {
     		return Collections.emptyMap();
     	} else {
-    		return getTemplateProject().getBuildWrappers();
+    		return getTemplateProject().getAllBuildWrappers();
     	}
     }
     public Map<Descriptor<BuildWrapper>,BuildWrapper> getAllBuildWrappers() {
@@ -146,12 +146,21 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
         return builders;
     }
     
+    public DescribableList<Builder,Descriptor<Builder>> getAllBuildersList() {
+    	Project<?,?> templateProject = getTemplateProject();
+    	if (templateProject == null) {
+    		return new DescribableList<Builder, Descriptor<Builder>>(Saveable.NOOP);
+    	} else {
+    		return getTemplateProject().getAllBuildersList();
+    	}
+    }
+
     public DescribableList<Publisher,Descriptor<Publisher>> getAllPublishersList() {
     	Project<?,?> templateProject = getTemplateProject();
     	if (templateProject == null) {
     		return new DescribableList<Publisher, Descriptor<Publisher>>(Saveable.NOOP);
     	} else {
-    		return getTemplateProject().getPublishersList();
+    		return getTemplateProject().getAllPublishersList();
     	}
     }
     public DescribableList<Publisher,Descriptor<Publisher>> getPublishersList() {
@@ -204,14 +213,14 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     }
 
     protected void buildDependencyGraph(DependencyGraph graph) {
-        publishers.buildDependencyGraph(this,graph);
+        getAllPublishersList().buildDependencyGraph(this,graph);
         builders.buildDependencyGraph(this,graph);
         buildWrappers.buildDependencyGraph(this,graph);
     }
 
     @Override
     public boolean isFingerprintConfigured() {
-        for (Publisher p : publishers) {
+        for (Publisher p : getAllPublishersList()) {
             if(p instanceof Fingerprinter)
                 return true;
         }
@@ -219,7 +228,7 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     }
 
     public MavenInstallation inferMavenInstallation() {
-        for (Builder builder : builders) {
+        for (Builder builder : getAllBuilders()) {
             if (builder instanceof Maven)
                 return ((Maven) builder).getMaven();
         }

@@ -1,0 +1,13 @@
+- each project can have zero/one/more(?) template projects
+
+- for certain project values, we will go look at the template project
+    - builders: add to local
+    - publishers: local (if exists) overrides template
+    - build wrappers: local (if exists) overrides template
+
+- in UI, we show template values as read only
+- with an option to add a local value too -- if this option is taken, the template value is completely ignored
+- it is also possible to parameterize the template values - identical to parameters
+    - to decide: provide these values on project level or more finegrained
+    - should be able to list the parameters on template level and provide default values
+
