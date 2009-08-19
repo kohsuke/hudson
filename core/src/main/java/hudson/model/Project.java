@@ -111,7 +111,7 @@ public abstract class Project<P extends Project<P,B>,B extends Build<P,B>>
     }
     
     public List<Builder> getAllBuilders() {
-        return Util.join(getTemplateBuilders(), getBuilders());
+    	return Util.join(getTemplateBuilders(), getBuilders());
     }
     
     public Map<Descriptor<Publisher>,Publisher> getTemplatePublishers() {
