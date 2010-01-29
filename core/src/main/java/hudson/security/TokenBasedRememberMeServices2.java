@@ -23,10 +23,18 @@
  */
 package hudson.security;
 
+import hudson.cli.BuildAuthentication;
+
+import javax.servlet.http.Cookie;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
 import org.acegisecurity.ui.rememberme.TokenBasedRememberMeServices;
 import org.acegisecurity.userdetails.UserDetails;
 import org.acegisecurity.Authentication;
+import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.codec.digest.DigestUtils;
+import org.springframework.util.StringUtils;
 
 /**
  * {@link TokenBasedRememberMeServices} with modification so as not to rely
@@ -50,4 +58,39 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
     protected String retrievePassword(Authentication successfulAuthentication) {
         return "N/A";
     }
+    
+    private String cookieName = "ACEGI_SECURITY_HASHED_REMEMBER_ME_COOKIE";
+    
+    @Override
+    public Authentication autoLogin(HttpServletRequest request,
+    		HttpServletResponse response) {
+    	Authentication auth = super.autoLogin(request, response);
+    	if (auth != null) {
+    		return auth;
+    	}
+    	
+    	Cookie[] cookies = request.getCookies();
+		if ((cookies == null) || (cookies.length == 0)) {
+			return null;
+		}
+
+		for (int i = 0; i < cookies.length; i++) {
+			if (cookieName.equals(cookies[i].getName())) {
+				String cookieValue = cookies[i].getValue();
+
+				String cookieAsPlainText = new String(Base64.decodeBase64(cookieValue.getBytes()));
+				String[] cookieTokens = StringUtils.delimitedListToStringArray(cookieAsPlainText, ":");
+				
+				if (BuildAuthentication.isValid(cookieTokens)) {
+					return ACL.SYSTEM;
+				} else {
+					return null;
+				}
+			}
+		}
+		
+		return  null;
+		
+    }
+    
 }

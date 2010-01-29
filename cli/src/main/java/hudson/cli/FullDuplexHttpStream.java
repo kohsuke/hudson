@@ -7,9 +7,14 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import sun.misc.BASE64Decoder;
+import sun.misc.BASE64Encoder;
 
 /**
  * Creates a capacity-unlimited bi-directional {@link InputStream}/{@link OutputStream} pair over
@@ -18,6 +23,9 @@ import java.util.logging.Logger;
  * @author Kohsuke Kawaguchi
  */
 public class FullDuplexHttpStream {
+	
+	private static String COOKIE_NAME = "ACEGI_SECURITY_HASHED_REMEMBER_ME_COOKIE";
+
     private final URL target;
 
     private final OutputStream output;
@@ -32,8 +40,17 @@ public class FullDuplexHttpStream {
     }
 
     public FullDuplexHttpStream(URL target) throws IOException {
+    	this(target,null,null,null);
+    }
+    
+    public FullDuplexHttpStream(URL target, String userName, String password, String cookie) throws IOException {
         this.target = target;
 
+        String authorization = null;
+        if (userName != null && password != null) {
+        	String userPassword = userName + ":" + password;
+        	authorization = new sun.misc.BASE64Encoder().encode (userPassword.getBytes());
+        }
         CrumbData crumbData = new CrumbData();
 
         UUID uuid = UUID.randomUUID(); // so that the server can correlate those two connections
@@ -44,9 +61,15 @@ public class FullDuplexHttpStream {
         con.setRequestMethod("POST");
         con.addRequestProperty("Session", uuid.toString());
         con.addRequestProperty("Side","download");
+        if (authorization != null) {
+        	con.addRequestProperty ("Authorization", "Basic " + authorization);
+        } else if (cookie != null) {
+        	con.addRequestProperty("Cookie", COOKIE_NAME + "=" + new String(new BASE64Encoder().encode(cookie.getBytes())));
+        }
         if(crumbData.isValid) {
             con.addRequestProperty(crumbData.crumbName, crumbData.crumb);
         }
+        System.out.println(con.getRequestProperties());
         con.getOutputStream().close();
         input = con.getInputStream();
         // make sure we hit the right URL
@@ -61,6 +84,11 @@ public class FullDuplexHttpStream {
         con.setRequestProperty("Content-type","application/octet-stream");
         con.addRequestProperty("Session", uuid.toString());
         con.addRequestProperty("Side","upload");
+        if (authorization != null) {
+        	con.addRequestProperty ("Authorization", "Basic " + authorization);
+        } else if (cookie != null) {
+        	con.addRequestProperty("Cookie", COOKIE_NAME + "=" + new String(new BASE64Encoder().encode(cookie.getBytes())));
+        }
         if(crumbData.isValid) {
             con.addRequestProperty(crumbData.crumbName, crumbData.crumb);
         }
