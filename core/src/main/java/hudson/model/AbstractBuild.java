@@ -32,6 +32,7 @@ import hudson.FilePath;
 import hudson.slaves.WorkspaceList;
 import hudson.slaves.NodeProperty;
 import hudson.slaves.WorkspaceList.Lease;
+import hudson.cli.BuildAuthentication;
 import hudson.matrix.MatrixConfiguration;
 import hudson.model.Fingerprint.BuildPtr;
 import hudson.model.Fingerprint.RangeSet;
@@ -668,6 +669,8 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
         // so don't let that inherit to the new child process.
         // see http://www.nabble.com/Run-Job-with-JDK-1.4.2-tf4468601.html
         env.put("CLASSPATH","");
+        
+        BuildAuthentication.buildEnvVars(env, this);
 
         JDK jdk = project.getJDK();
         if (jdk != null) {
