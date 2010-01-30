@@ -51,7 +51,10 @@ import java.util.logging.Logger;
 
 import javax.servlet.http.HttpServletRequest;
 
+import org.acegisecurity.AcegiSecurityException;
+import org.acegisecurity.Authentication;
 import org.acegisecurity.context.SecurityContextHolder;
+import org.acegisecurity.providers.UsernamePasswordAuthenticationToken;
 import org.acegisecurity.providers.rememberme.RememberMeAuthenticationToken;
 import org.acegisecurity.userdetails.UserDetails;
 import org.acegisecurity.userdetails.UserDetailsService;
@@ -61,314 +64,355 @@ import org.springframework.util.StringUtils;
 
 /**
  * Listens to incoming TCP connections from JNLP slave agents and CLI.
- *
+ * 
  * <h2>Security</h2>
  * <p>
- * Once connected, remote slave agents can send in commands to be
- * executed on the master, so in a way this is like an rsh service.
- * Therefore, it is important that we reject connections from
- * unauthorized remote slaves.
- *
+ * Once connected, remote slave agents can send in commands to be executed on
+ * the master, so in a way this is like an rsh service. Therefore, it is
+ * important that we reject connections from unauthorized remote slaves.
+ * 
  * <p>
- * The approach here is to have {@link Hudson#getSecretKey() a secret key} on the master.
- * This key is sent to the slave inside the <tt>.jnlp</tt> file
- * (this file itself is protected by HTTP form-based authentication that
- * we use everywhere else in Hudson), and the slave sends this
- * token back when it connects to the master.
- * Unauthorized slaves can't access the protected <tt>.jnlp</tt> file,
- * so it can't impersonate a valid slave.
- *
+ * The approach here is to have {@link Hudson#getSecretKey() a secret key} on
+ * the master. This key is sent to the slave inside the <tt>.jnlp</tt> file
+ * (this file itself is protected by HTTP form-based authentication that we use
+ * everywhere else in Hudson), and the slave sends this token back when it
+ * connects to the master. Unauthorized slaves can't access the protected
+ * <tt>.jnlp</tt> file, so it can't impersonate a valid slave.
+ * 
  * <p>
- * We don't want to force the JNLP slave agents to be restarted
- * whenever the server restarts, so right now this secret master key
- * is generated once and used forever, which makes this whole scheme
- * less secure.
- *
+ * We don't want to force the JNLP slave agents to be restarted whenever the
+ * server restarts, so right now this secret master key is generated once and
+ * used forever, which makes this whole scheme less secure.
+ * 
  * @author Kohsuke Kawaguchi
  */
 public final class TcpSlaveAgentListener extends Thread {
 
-    private final ServerSocket serverSocket;
-    private volatile boolean shuttingDown;
+	private final ServerSocket serverSocket;
+	private volatile boolean shuttingDown;
 
-    public final int configuredPort;
+	public final int configuredPort;
 
-    /**
-     * @param port
-     *      Use 0 to choose a random port.
-     */
-    public TcpSlaveAgentListener(int port) throws IOException {
-        super("TCP slave agent listener port="+port);
-        try {
-            serverSocket = new ServerSocket(port);
-        } catch (BindException e) {
-            throw (BindException)new BindException("Failed to listen on port "+port+" because it's already in use.").initCause(e);
-        }
-        this.configuredPort = port;
+	/**
+	 * @param port
+	 *            Use 0 to choose a random port.
+	 */
+	public TcpSlaveAgentListener(int port) throws IOException {
+		super("TCP slave agent listener port=" + port);
+		try {
+			serverSocket = new ServerSocket(port);
+		} catch (BindException e) {
+			throw (BindException) new BindException("Failed to listen on port "
+					+ port + " because it's already in use.").initCause(e);
+		}
+		this.configuredPort = port;
 
-        LOGGER.info("JNLP slave agent listener started on TCP port "+getPort());
+		LOGGER.info("JNLP slave agent listener started on TCP port "
+				+ getPort());
 
-        start();
-    }
+		start();
+	}
 
-    /**
-     * Gets the TCP port number in which we are listening.
-     */
-    public int getPort() {
-        return serverSocket.getLocalPort();
-    }
+	/**
+	 * Gets the TCP port number in which we are listening.
+	 */
+	public int getPort() {
+		return serverSocket.getLocalPort();
+	}
 
-    private String getSecretKey() {
-        return Hudson.getInstance().getSecretKey();
-    }
+	private String getSecretKey() {
+		return Hudson.getInstance().getSecretKey();
+	}
 
-    @Override
-    public void run() {
-        try {
-            // the loop eventually terminates when the socket is closed.
-            while (true) {
-                Socket s = serverSocket.accept();
-                new ConnectionHandler(s).start();
-            }
-        } catch (IOException e) {
-            if(!shuttingDown) {
-                LOGGER.log(Level.SEVERE,"Failed to accept JNLP slave agent connections",e);
-            }
-        }
-    }
+	@Override
+	public void run() {
+		try {
+			// the loop eventually terminates when the socket is closed.
+			while (true) {
+				Socket s = serverSocket.accept();
+				new ConnectionHandler(s).start();
+			}
+		} catch (IOException e) {
+			if (!shuttingDown) {
+				LOGGER.log(Level.SEVERE,
+						"Failed to accept JNLP slave agent connections", e);
+			}
+		}
+	}
 
-    /**
-     * Initiates the shuts down of the listener.
-     */
-    public void shutdown() {
-        shuttingDown = true;
-        try {
-            serverSocket.close();
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to close down TCP port",e);
-        }
-    }
+	/**
+	 * Initiates the shuts down of the listener.
+	 */
+	public void shutdown() {
+		shuttingDown = true;
+		try {
+			serverSocket.close();
+		} catch (IOException e) {
+			LOGGER.log(Level.WARNING, "Failed to close down TCP port", e);
+		}
+	}
 
-    private final class ConnectionHandler extends Thread {
-        private final Socket s;
-        /**
-         * Unique number to identify this connection. Used in the log.
-         */
-        private final int id;
+	private final class ConnectionHandler extends Thread {
+		private final Socket s;
+		/**
+		 * Unique number to identify this connection. Used in the log.
+		 */
+		private final int id;
 
-        public ConnectionHandler(Socket s) {
-            this.s = s;
-            synchronized(getClass()) {
-                id = iotaGen++;
-            }
-        }
+		public ConnectionHandler(Socket s) {
+			this.s = s;
+			synchronized (getClass()) {
+				id = iotaGen++;
+			}
+		}
 
-        @Override
-        public void run() {
-            try {
-                LOGGER.info("Accepted connection #"+id+" from "+s.getRemoteSocketAddress());
+		@Override
+		public void run() {
+			try {
+				LOGGER.info("Accepted connection #" + id + " from "
+						+ s.getRemoteSocketAddress());
 
-                DataInputStream in = new DataInputStream(s.getInputStream());
-                PrintWriter out = new PrintWriter(s.getOutputStream(),true);
+				DataInputStream in = new DataInputStream(s.getInputStream());
+				PrintWriter out = new PrintWriter(s.getOutputStream(), true);
 
-                String s = in.readUTF();
+				String s = in.readUTF();
 
-                if(s.startsWith("Protocol:")) {
-                    String protocol = s.substring(9);
-                    if(protocol.equals("JNLP-connect")) {
-                        runJnlpConnect(in, out);
-                    } else if(protocol.equals("CLI-connect")) {
-                            runCliConnect(in, out);
-                    } else if(protocol.equals("CLI-connect-authenticated")) {
-                        runCliConnectAuthenticated(in, out);
-                    } else {
-                        error(out, "Unknown protocol:" + s);
-                    }
-                } else {
-                    error(out, "Unrecognized protocol: "+s);
-                }
-            } catch (InterruptedException e) {
-                LOGGER.log(Level.WARNING,"Connection #"+id+" aborted",e);
-                try {
-                    s.close();
-                } catch (IOException _) {
-                    // try to clean up the socket
-                }
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING,"Connection #"+id+" failed",e);
-                try {
-                    s.close();
-                } catch (IOException _) {
-                    // try to clean up the socket
-                }
-            }
-        }
+				if (s.startsWith("Protocol:")) {
+					String protocol = s.substring(9);
+					if (protocol.equals("JNLP-connect")) {
+						runJnlpConnect(in, out);
+					} else if (protocol.equals("CLI-connect")) {
+						runCliConnect(in, out);
+					} else if (protocol.equals("CLI-connect-authenticated")) {
+						runCliConnectAuthenticated(in, out);
+					} else {
+						error(out, "Unknown protocol:" + s);
+					}
+				} else {
+					error(out, "Unrecognized protocol: " + s);
+				}
+			} catch (InterruptedException e) {
+				LOGGER.log(Level.WARNING, "Connection #" + id + " aborted", e);
+				try {
+					s.close();
+				} catch (IOException _) {
+					// try to clean up the socket
+				}
+			} catch (IOException e) {
+				LOGGER.log(Level.WARNING, "Connection #" + id + " failed", e);
+				try {
+					s.close();
+				} catch (IOException _) {
+					// try to clean up the socket
+				}
+			}
+		}
 
-        /**
-         * Handles CLI connection request.
-         */
-        private void runCliConnect(DataInputStream in, PrintWriter out) throws IOException, InterruptedException {
-            out.println("Welcome");
-            Channel channel = new Channel("CLI channel from " + s.getInetAddress(),
-                    Computer.threadPoolForRemoting, Mode.BINARY,
-                    new BufferedInputStream(new SocketInputStream(this.s)),
-                    new BufferedOutputStream(new SocketOutputStream(this.s)), null, true);
-            channel.setProperty(CliEntryPoint.class.getName(),new CliManagerImpl(null));
-            channel.join();
-        }
-        
-        /**
-         * Handles authenticated CLI connection request.
-         */
-        private void runCliConnectAuthenticated(DataInputStream in, PrintWriter out) throws IOException, InterruptedException {
-        	String cookie = in.readUTF();
-			String[] cookieTokens = StringUtils.delimitedListToStringArray(cookie, ":");
-			long tokenExpiryTime;
+		/**
+		 * Handles CLI connection request.
+		 */
+		private void runCliConnect(DataInputStream in, PrintWriter out)
+				throws IOException, InterruptedException {
+			out.println("Welcome");
+			Channel channel = new Channel("CLI channel from "
+					+ s.getInetAddress(), Computer.threadPoolForRemoting,
+					Mode.BINARY, new BufferedInputStream(new SocketInputStream(
+							this.s)), new BufferedOutputStream(
+							new SocketOutputStream(this.s)), null, true);
+			channel.setProperty(CliEntryPoint.class.getName(),
+					new CliManagerImpl(null));
+			channel.join();
+		}
+
+		/**
+		 * Handles authenticated CLI connection request.
+		 */
+		private void runCliConnectAuthenticated(DataInputStream in,
+				PrintWriter out) throws IOException, InterruptedException {
+			UserDetailsService uds = Hudson.getInstance().getSecurityRealm()
+					.getSecurityComponents().userDetails;
+
+			Authentication auth = null;
+
+			String line = in.readUTF();
+			if (line.startsWith("cookie:")) {
+				String cookie = line.substring(7);
+
+				String[] cookieTokens = StringUtils.delimitedListToStringArray(
+						cookie, ":");
+				long tokenExpiryTime;
+
+				try {
+					tokenExpiryTime = new Long(cookieTokens[1]).longValue();
+				} catch (NumberFormatException nfe) {
+					error(out, "invalid format for tokenExpiryTime");
+					return;
+				}
+
+				if (tokenExpiryTime < System.currentTimeMillis()) {
+					error(out, "token expired");
+					return;
+				}
+
+				String expectedTokenSignature = DigestUtils
+						.md5Hex(cookieTokens[0] + ":" + tokenExpiryTime + ":"
+								+ "N/A" + ":"
+								+ Hudson.getInstance().getSecretKey());
+				if (!expectedTokenSignature.equals(cookieTokens[2])) {
+					error(out, "invalid cookie");
+					return;
+				}
+
+				try {
+					UserDetails userDetails = uds
+							.loadUserByUsername(cookieTokens[0]);
+					auth = new RememberMeAuthenticationToken(Hudson
+							.getInstance().getSecretKey(), userDetails,
+							userDetails.getAuthorities());
+				} catch (UsernameNotFoundException notFound) {
+					error(out, "unknown user " + cookieTokens[0]);
+					return;
+				}
+
+			} else if (line.startsWith("user:")) {
+				String user = line.substring(5);
+				String password = in.readUTF().substring("password:".length());
+
+				try {
+					auth = Hudson.getInstance().getSecurityRealm()
+							.getSecurityComponents().manager
+							.authenticate(new UsernamePasswordAuthenticationToken(
+									user, password));
+				} catch (AcegiSecurityException e) {
+					error(out, e.getMessage());
+					return;
+				}
+
+			}
 
 			try {
-				tokenExpiryTime = new Long(cookieTokens[1]).longValue();
-			}
-			catch (NumberFormatException nfe) {
-				out.println("invalid format for tokenExpiryTime");
-				return;
-			}
-
-			if (tokenExpiryTime < System.currentTimeMillis()) {
-				out.println("token expired");
-				return;
-			}
-
-			UserDetailsService uds = Hudson.getInstance().getSecurityRealm().getSecurityComponents().userDetails;
-			UserDetails userDetails = null;
-
-			try {
-				userDetails = uds.loadUserByUsername(cookieTokens[0]);
-			}
-			catch (UsernameNotFoundException notFound) {
-				out.println("unknown user " + cookieTokens[0]);
-				return;
-			}
-			
-			String expectedTokenSignature = DigestUtils.md5Hex(cookieTokens[0] + ":" + tokenExpiryTime
-					+ ":" + "N/A" + ":" + Hudson.getInstance().getSecretKey());
-			if (!expectedTokenSignature.equals(cookieTokens[2])) {
-				out.println("invalid cookie");
-				return;
-			}
-			
-			RememberMeAuthenticationToken auth = new RememberMeAuthenticationToken(Hudson.getInstance().getSecretKey(), userDetails,
-					userDetails.getAuthorities());
-			// TODO setDetails
-			
-			try {
-				out.println("Welcome");
-				Channel channel = new Channel("CLI channel from " + s.getInetAddress(),
-						Computer.threadPoolForRemoting, Mode.BINARY,
+				out.println(Engine.GREETING_SUCCESS);
+				Channel channel = new Channel(
+						"CLI channel from " + s.getInetAddress(),
+						Computer.threadPoolForRemoting,
+						Mode.BINARY,
 						new BufferedInputStream(new SocketInputStream(this.s)),
-						new BufferedOutputStream(new SocketOutputStream(this.s)), null, true);
-				channel.setProperty(CliEntryPoint.class.getName(),new CliManagerImpl(auth));
+						new BufferedOutputStream(new SocketOutputStream(this.s)),
+						null, true);
+				channel.setProperty(CliEntryPoint.class.getName(),
+						new CliManagerImpl(auth));
 				channel.join();
 			} finally {
 				SecurityContextHolder.getContext().setAuthentication(null);
 			}
-        }
-        
+		}
 
-        /**
-         * Handles JNLP slave agent connection request.
-         */
-        private void runJnlpConnect(DataInputStream in, PrintWriter out) throws IOException, InterruptedException {
-            if(!getSecretKey().equals(in.readUTF())) {
-                error(out, "Unauthorized access");
-                return;
-            }
+		/**
+		 * Handles JNLP slave agent connection request.
+		 */
+		private void runJnlpConnect(DataInputStream in, PrintWriter out)
+				throws IOException, InterruptedException {
+			if (!getSecretKey().equals(in.readUTF())) {
+				error(out, "Unauthorized access");
+				return;
+			}
 
-            String nodeName = in.readUTF();
-            SlaveComputer computer = (SlaveComputer) Hudson.getInstance().getComputer(nodeName);
-            if(computer==null) {
-                error(out, "No such slave: "+nodeName);
-                return;
-            }
+			String nodeName = in.readUTF();
+			SlaveComputer computer = (SlaveComputer) Hudson.getInstance()
+					.getComputer(nodeName);
+			if (computer == null) {
+				error(out, "No such slave: " + nodeName);
+				return;
+			}
 
-            if(computer.getChannel()!=null) {
-                error(out, nodeName+" is already connected to this master. Rejecting this connection.");
-                return;
-            }
+			if (computer.getChannel() != null) {
+				error(
+						out,
+						nodeName
+								+ " is already connected to this master. Rejecting this connection.");
+				return;
+			}
 
-            out.println(Engine.GREETING_SUCCESS);
+			out.println(Engine.GREETING_SUCCESS);
 
-            final OutputStream log = computer.openLogFile();
-            PrintWriter logw = new PrintWriter(log,true);
-            logw.println("JNLP agent connected from "+ this.s.getInetAddress());
+			final OutputStream log = computer.openLogFile();
+			PrintWriter logw = new PrintWriter(log, true);
+			logw
+					.println("JNLP agent connected from "
+							+ this.s.getInetAddress());
 
-            try {
-                computer.setChannel(new BufferedInputStream(this.s.getInputStream()), new BufferedOutputStream(this.s.getOutputStream()), log,
-                    new Listener() {
-                        @Override
-                        public void onClosed(Channel channel, IOException cause) {
-                            try {
-                                log.close();
-                            } catch (IOException e) {
-                                e.printStackTrace();
-                            }
-                            if(cause!=null)
-                                LOGGER.log(Level.WARNING, "Connection #"+id+" terminated",cause);
-                            try {
-                                ConnectionHandler.this.s.close();
-                            } catch (IOException e) {
-                                // ignore
-                            }
-                        }
-                    });
-            } catch (IOException e) {
-                logw.println("Failed to establish the connection with the slave"); 
-                e.printStackTrace(logw);
-                throw e;
-            }
-        }
+			try {
+				computer.setChannel(new BufferedInputStream(this.s
+						.getInputStream()), new BufferedOutputStream(this.s
+						.getOutputStream()), log, new Listener() {
+					@Override
+					public void onClosed(Channel channel, IOException cause) {
+						try {
+							log.close();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+						if (cause != null)
+							LOGGER.log(Level.WARNING, "Connection #" + id
+									+ " terminated", cause);
+						try {
+							ConnectionHandler.this.s.close();
+						} catch (IOException e) {
+							// ignore
+						}
+					}
+				});
+			} catch (IOException e) {
+				logw
+						.println("Failed to establish the connection with the slave");
+				e.printStackTrace(logw);
+				throw e;
+			}
+		}
 
-        private void error(PrintWriter out, String msg) throws IOException {
-            out.println(msg);
-            LOGGER.log(Level.WARNING,"Connection #"+id+" is aborted: "+msg);
-            s.close();
-        }
-    }
+		private void error(PrintWriter out, String msg) throws IOException {
+			out.println(msg);
+			LOGGER.log(Level.WARNING, "Connection #" + id + " is aborted: "
+					+ msg);
+			s.close();
+		}
+	}
 
-    private static int iotaGen=1;
+	private static int iotaGen = 1;
 
-    private static final Logger LOGGER = Logger.getLogger(TcpSlaveAgentListener.class.getName());
+	private static final Logger LOGGER = Logger
+			.getLogger(TcpSlaveAgentListener.class.getName());
 }
 
 /*
-Pasted from http://today.java.net/pub/a/today/2005/09/01/webstart.html
-
-    Is it unrealistic to try to control access to JWS files?
-    Is anyone doing this?
-
-It is not unrealistic, and we are doing it. Create a protected web page
-with a download button or link that makes a servlet call. If the user has
-already logged in to your website, of course they can go there without
-further authentication. The servlet reads the cookies sent by the browser
-when the link is activated. It then generates a dynamic JNLP file adding
-the authentication cookie and any other required cookies (JSESSIONID, etc.)
-via <argument> tags. Write the WebStart application so that it picks up
-any required cookies from the argument list, and adds these cookies to its
-request headers on subsequent calls to the server. (Note: in the dynamic
-JNLP file, do NOT put href= in the opening jnlp tag. If you do, JWS will
-try to reload the JNLP from disk and since it's dynamic, it won't be there.
-Leave it off and JWS will be happy.)
-
-When returning the dynamic JNLP, the servlet should invoke setHeader(
-"Expires", 0 ) and addDateHeader() twice on the servlet response to set
-both "Date" and "Last-Modified" to the current date. This keeps the browser
-from using a cached copy of a prior dynamic JNLP obtained from the same URL.
-
-Note also that the JAR file(s) for the JWS application should not be on
-a password-protected path - the launcher won't know about the authentication
-cookie. But once the application starts, you can run all its requests
-through a protected path requiring the authentication cookie, because
-the application gets it from the dynamic JNLP. Just write it so that it
-can't do anything useful without going through a protected path or doing
-something to present credentials that could only have come from a valid
-user.
-*/
+ * Pasted from http://today.java.net/pub/a/today/2005/09/01/webstart.html
+ * 
+ * Is it unrealistic to try to control access to JWS files? Is anyone doing
+ * this?
+ * 
+ * It is not unrealistic, and we are doing it. Create a protected web page with
+ * a download button or link that makes a servlet call. If the user has already
+ * logged in to your website, of course they can go there without further
+ * authentication. The servlet reads the cookies sent by the browser when the
+ * link is activated. It then generates a dynamic JNLP file adding the
+ * authentication cookie and any other required cookies (JSESSIONID, etc.) via
+ * <argument> tags. Write the WebStart application so that it picks up any
+ * required cookies from the argument list, and adds these cookies to its
+ * request headers on subsequent calls to the server. (Note: in the dynamic JNLP
+ * file, do NOT put href= in the opening jnlp tag. If you do, JWS will try to
+ * reload the JNLP from disk and since it's dynamic, it won't be there. Leave it
+ * off and JWS will be happy.)
+ * 
+ * When returning the dynamic JNLP, the servlet should invoke setHeader(
+ * "Expires", 0 ) and addDateHeader() twice on the servlet response to set both
+ * "Date" and "Last-Modified" to the current date. This keeps the browser from
+ * using a cached copy of a prior dynamic JNLP obtained from the same URL.
+ * 
+ * Note also that the JAR file(s) for the JWS application should not be on a
+ * password-protected path - the launcher won't know about the authentication
+ * cookie. But once the application starts, you can run all its requests through
+ * a protected path requiring the authentication cookie, because the application
+ * gets it from the dynamic JNLP. Just write it so that it can't do anything
+ * useful without going through a protected path or doing something to present
+ * credentials that could only have come from a valid user.
+ */

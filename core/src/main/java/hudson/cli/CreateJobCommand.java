@@ -24,6 +24,7 @@
 package hudson.cli;
 
 import hudson.model.Hudson;
+import hudson.model.Job;
 import hudson.Extension;
 import org.kohsuke.args4j.Argument;
 
@@ -44,6 +45,8 @@ public class CreateJobCommand extends CLICommand {
 
     protected int run() throws Exception {
         Hudson h = Hudson.getInstance();
+        h.checkPermission(Job.CREATE);
+        
         if (h.getItem(name)!=null) {
             stderr.println("Job '"+name+"' already exists");
             return -1;

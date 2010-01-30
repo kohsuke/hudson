@@ -23,26 +23,28 @@
  */
 package hudson.cli;
 
+import hudson.AbortException;
+import hudson.Extension;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Cause;
-import hudson.model.ParametersAction;
-import hudson.model.ParameterValue;
-import hudson.model.ParametersDefinitionProperty;
+import hudson.model.Job;
 import hudson.model.ParameterDefinition;
-import hudson.Extension;
-import hudson.AbortException;
+import hudson.model.ParameterValue;
+import hudson.model.ParametersAction;
+import hudson.model.ParametersDefinitionProperty;
 import hudson.util.EditDistance;
-import org.kohsuke.args4j.Argument;
-import org.kohsuke.args4j.Option;
 
-import java.util.concurrent.Future;
-import java.util.Map;
+import java.io.PrintStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.ArrayList;
+import java.util.Map;
 import java.util.Map.Entry;
-import java.io.PrintStream;
+import java.util.concurrent.Future;
+
+import org.kohsuke.args4j.Argument;
+import org.kohsuke.args4j.Option;
 
 /**
  * Builds a job, and optionally waits until its completion.
@@ -66,6 +68,8 @@ public class BuildCommand extends CLICommand {
     public Map<String,String> parameters = new HashMap<String, String>();
 
     protected int run() throws Exception {
+    	job.checkPermission(Job.BUILD);
+    	
         ParametersAction a = null;
 
         if (!parameters.isEmpty()) {

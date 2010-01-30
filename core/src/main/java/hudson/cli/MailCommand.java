@@ -23,6 +23,7 @@
  */
 package hudson.cli;
 
+import hudson.model.Hudson;
 import hudson.tasks.Mailer;
 import hudson.Extension;
 
@@ -44,6 +45,8 @@ public class MailCommand extends CLICommand {
     }
 
     protected int run() throws Exception {
+    	Hudson.getInstance().checkPermission(Hudson.ADMINISTER);
+    	
         Transport.send(new MimeMessage(Mailer.descriptor().createSession(),stdin));
         return 0;
     }

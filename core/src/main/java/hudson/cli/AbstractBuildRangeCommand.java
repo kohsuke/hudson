@@ -2,6 +2,7 @@ package hudson.cli;
 
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
+import hudson.model.Job;
 import hudson.model.Fingerprint.RangeSet;
 import org.kohsuke.args4j.Argument;
 
@@ -21,6 +22,7 @@ public abstract class AbstractBuildRangeCommand extends CLICommand {
     public String range;
 
     protected int run() throws Exception {
+    	job.checkPermission(Job.DELETE);
         RangeSet rs = RangeSet.fromString(range,false);
 
         return act((List)job.getBuilds(rs));

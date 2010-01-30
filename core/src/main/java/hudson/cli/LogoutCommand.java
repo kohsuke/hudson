@@ -1,16 +1,11 @@
 package hudson.cli;
 
 import hudson.Extension;
-import hudson.model.Hudson;
 import hudson.remoting.Callable;
+import hudson.remoting.Channel;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.Properties;
-
-import org.apache.commons.codec.digest.DigestUtils;
 
 @Extension
 public class LogoutCommand extends CLICommand implements Serializable {
@@ -26,18 +21,10 @@ public class LogoutCommand extends CLICommand implements Serializable {
 	protected int run() throws Exception {
 		return channel.call(new Callable<Integer, IOException>() {
 			public Integer call() throws IOException {
-				File cookieFile = new File(System.getProperty("user.home"),
-						".hudson/cookie.txt");
-				if (!cookieFile.exists()) {
-					return 0;
-				}
-				if (cookieFile.delete()) {
-					return 0;
-				}
-				stderr.println("could not delete " + cookieFile);
-				
-				return -1;
-				
+				String url = (String) Channel.current().getProperty("url");
+				CookieJar cookieJar = (CookieJar) Channel.current().getProperty(CookieJar.class.getName());
+				cookieJar.removeCookie(url);
+				return 0;
 			}
 		});
 	}

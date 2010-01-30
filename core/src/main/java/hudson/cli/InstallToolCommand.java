@@ -97,7 +97,9 @@ public class InstallToolCommand extends CLICommand {
      * Performs an installation.
      */
     private int install(ToolInstallation t) throws IOException, InterruptedException {
-        // where is this build running?
+    	Hudson.getInstance().checkPermission(Hudson.ADMINISTER);
+
+    	// where is this build running?
         BuildIDs id = channel.call(new BuildIDs());
 
         if (!id.isComplete())

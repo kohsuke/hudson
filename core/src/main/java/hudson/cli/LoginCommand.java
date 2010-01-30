@@ -3,14 +3,10 @@ package hudson.cli;
 import hudson.Extension;
 import hudson.model.Hudson;
 import hudson.remoting.Callable;
+import hudson.remoting.Channel;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.Properties;
-
-import org.apache.commons.codec.digest.DigestUtils;
 
 @Extension
 public class LoginCommand extends CLICommand implements Serializable {
@@ -24,34 +20,29 @@ public class LoginCommand extends CLICommand implements Serializable {
 
 	@Override
 	protected int run() throws Exception {
+		if (Hudson.getAuthentication() == Hudson.ANONYMOUS) {
+			stderr.println("Please provide credentials");
+			stderr.println();
+			stderr.println("java -jar cli.jar -u <user> -p <password> login");
+			return -1;
+		}
+		
+		// TODO parameterize this
 		long tokenExpiryTime = System.currentTimeMillis() + 24 * 60 * 60 * 1000;
-		final String cookie = encodeCookie(
-				Hudson.getAuthentication().getName(), tokenExpiryTime);
+		
+		final String cookie = new Cookie(Hudson.getAuthentication().getName(),
+				tokenExpiryTime).encode(Hudson.getInstance().getSecretKey());
 
 		channel.call(new Callable<Void, IOException>() {
 			public Void call() throws IOException {
-				File cookieFile = new File(System.getProperty("user.home"),
-						".hudson/cookie.txt");
-				cookieFile.getParentFile().mkdirs();
-				Properties p = new Properties();
-				p.put("cookie", cookie);
-				FileWriter writer = new FileWriter(cookieFile);
-				try {
-					p.store(writer, "");
-				} finally {
-					writer.close();
-				}
+				String url = (String) Channel.current().getProperty("url");
+				CookieJar cookieJar = (CookieJar) Channel.current().getProperty(CookieJar.class.getName());
+				cookieJar.addCookie(url, cookie);
+				
 				return null;
 			}
 		});
 		return 0;
-	}
-
-	public static String encodeCookie(String userName, long tokenExpiryTime) {
-		String signature = DigestUtils.md5Hex(userName + ":" + tokenExpiryTime
-				+ ":" + "N/A" + ":" + Hudson.getInstance().getSecretKey());
-		String cookie = userName + ":" + tokenExpiryTime + ":" + signature;
-		return cookie;
 	}
 
 }

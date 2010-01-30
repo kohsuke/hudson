@@ -58,6 +58,8 @@ public class InstallPluginCommand extends CLICommand {
     public boolean restart;
 
     protected int run() throws Exception {
+    	Hudson.getInstance().checkPermission(Hudson.ADMINISTER);
+    	
         for (String source : sources) {
             // is this a file?
             FilePath f = new FilePath(channel, source);
