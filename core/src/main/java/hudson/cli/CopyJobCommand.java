@@ -23,13 +23,12 @@
  */
 package hudson.cli;
 
-import hudson.model.AbstractProject;
-import hudson.model.Hudson;
-import hudson.model.TopLevelItem;
 import hudson.Extension;
-import org.kohsuke.args4j.Argument;
+import hudson.model.Hudson;
+import hudson.model.Job;
+import hudson.model.TopLevelItem;
 
-import java.io.Serializable;
+import org.kohsuke.args4j.Argument;
 
 /**
  * Copies a job from CLI.
@@ -51,6 +50,8 @@ public class CopyJobCommand extends CLICommand {
 
     protected int run() throws Exception {
         Hudson h = Hudson.getInstance();
+        h.checkPermission(Job.CREATE);
+        
         if (h.getItem(dst)!=null) {
             stderr.println("Job '"+dst+"' already exists");
             return -1;

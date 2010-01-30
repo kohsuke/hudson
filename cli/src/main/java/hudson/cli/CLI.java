@@ -24,6 +24,7 @@
 package hudson.cli;
 
 import hudson.remoting.Channel;
+import hudson.remoting.Engine;
 import hudson.remoting.PingThread;
 import hudson.remoting.RemoteInputStream;
 import hudson.remoting.RemoteOutputStream;
@@ -32,11 +33,12 @@ import hudson.remoting.SocketOutputStream;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.net.URL;
@@ -45,7 +47,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
@@ -86,12 +87,20 @@ public class CLI {
             
             if (cookie != null) {
             	dos.writeUTF("Protocol:CLI-connect-authenticated");
-            	dos.writeUTF(cookie);
+            	dos.writeUTF("cookie:" + cookie);
             } else if (user != null && password != null) {
-            	// TODO
-            	throw new UnsupportedOperationException();
+            	dos.writeUTF("Protocol:CLI-connect-authenticated");
+            	dos.writeUTF("user:" + user);
+            	dos.writeUTF("password:" + password);
             } else {
             	dos.writeUTF("Protocol:CLI-connect");
+            }
+            
+            dos.flush();
+            String response = new BufferedReader(new InputStreamReader(s.getInputStream())).readLine();
+            if (!response.equals(Engine.GREETING_SUCCESS)) {
+            	System.err.println(response);
+            	System.exit(-1);
             }
 
             channel = new Channel("CLI connection to "+hudson, pool,
@@ -113,7 +122,7 @@ public class CLI {
                 }
             }.start();
         }
-
+        
         // execute the command
         entryPoint = (CliEntryPoint)channel.waitForRemoteProperty(CliEntryPoint.class.getName());
 
@@ -187,24 +196,14 @@ public class CLI {
         String cookie = null;
     	String hudson_cli_cookie = System.getenv("HUDSON_CLI_COOKIE");
     	
+    	CookieJar cookieJar = new CookieJar(new File(System.getProperty("user.home"), ".hudson/cookie.txt"));
         
         if (user != null ^ password != null) {
         	printUsageAndExit(Messages.CLI_UsernameAndPassword());
         } else if (hudson_cli_cookie != null) {
     		cookie = hudson_cli_cookie;
     	} else if (user == null && password == null) {
-        	File cookieFile = new File(System.getProperty("user.home"), ".hudson/cookie.txt");
-        	if (cookieFile.exists()) {
-        		Properties p = new Properties();
-        		FileReader reader = new FileReader(cookieFile);
-        		try {
-        			p.load(reader);
-        		} finally {
-        			reader.close();
-        		}
-        		cookie = p.getProperty("cookie");
-        	} 
-        } else {
+    		cookie = cookieJar.getCookie(url);
         }
         
         if(url==null) {
@@ -216,6 +215,12 @@ public class CLI {
             args = Arrays.asList("help"); // default to help
 
         CLI cli = new CLI(new URL(url), null, user, password, cookie);
+        
+        // associated the CookieJar and the url used by the client with the channel
+        // used by LoginCommand to store the cookie
+        cli.channel.setProperty("url", url);
+        cli.channel.setProperty(CookieJar.class.getName(), cookieJar);
+        
         int result = 0;
         try {
             // execute the command

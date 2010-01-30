@@ -79,9 +79,8 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
 				String cookieValue = cookies[i].getValue();
 
 				String cookieAsPlainText = new String(Base64.decodeBase64(cookieValue.getBytes()));
-				String[] cookieTokens = StringUtils.delimitedListToStringArray(cookieAsPlainText, ":");
 				
-				if (BuildAuthentication.isValid(cookieTokens)) {
+				if (BuildAuthentication.isValid(cookieAsPlainText)) {
 					return ACL.SYSTEM;
 				} else {
 					return null;
