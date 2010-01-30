@@ -69,7 +69,6 @@ public class FullDuplexHttpStream {
         if(crumbData.isValid) {
             con.addRequestProperty(crumbData.crumbName, crumbData.crumb);
         }
-        System.out.println(con.getRequestProperties());
         con.getOutputStream().close();
         input = con.getInputStream();
         // make sure we hit the right URL
