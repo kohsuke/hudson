@@ -83,7 +83,16 @@ public class CLI {
             LOGGER.fine("Trying to connect directly via TCP/IP to port "+clip+" of "+host);
             Socket s = new Socket(host,clip);
             DataOutputStream dos = new DataOutputStream(s.getOutputStream());
-            dos.writeUTF("Protocol:CLI-connect");
+            
+            if (cookie != null) {
+            	dos.writeUTF("Protocol:CLI-connect-authenticated");
+            	dos.writeUTF(cookie);
+            } else if (user != null && password != null) {
+            	// TODO
+            	throw new UnsupportedOperationException();
+            } else {
+            	dos.writeUTF("Protocol:CLI-connect");
+            }
 
             channel = new Channel("CLI connection to "+hudson, pool,
                     new BufferedInputStream(new SocketInputStream(s)),
@@ -207,14 +216,16 @@ public class CLI {
             args = Arrays.asList("help"); // default to help
 
         CLI cli = new CLI(new URL(url), null, user, password, cookie);
+        int result = 0;
         try {
             // execute the command
             // Arrays.asList is not serializable --- see 6835580
             args = new ArrayList<String>(args);
-            System.exit(cli.execute(args, System.in, System.out, System.err));
+            result = cli.execute(args, System.in, System.out, System.err);
         } finally {
             cli.close();
         }
+        System.exit(result);
     }
 
     private static void printUsageAndExit(String msg) {

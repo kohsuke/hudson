@@ -4,6 +4,11 @@ import hudson.EnvVars;
 import hudson.model.AbstractBuild;
 import hudson.model.Run;
 
+/**
+ * This builds/checks a token that is only valid while a build is running 
+ * @author huybrechts
+ *
+ */
 public class BuildAuthentication {
 
 	public static void buildEnvVars(EnvVars envVars, AbstractBuild build) {

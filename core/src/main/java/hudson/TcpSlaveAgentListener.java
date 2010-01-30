@@ -25,6 +25,7 @@ package hudson;
 
 import hudson.model.Hudson;
 import hudson.model.Computer;
+import hudson.security.ACL;
 import hudson.slaves.SlaveComputer;
 import hudson.remoting.Channel;
 import hudson.remoting.SocketOutputStream;
@@ -44,8 +45,19 @@ import java.io.BufferedOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.BindException;
+import java.util.Date;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import javax.servlet.http.HttpServletRequest;
+
+import org.acegisecurity.context.SecurityContextHolder;
+import org.acegisecurity.providers.rememberme.RememberMeAuthenticationToken;
+import org.acegisecurity.userdetails.UserDetails;
+import org.acegisecurity.userdetails.UserDetailsService;
+import org.acegisecurity.userdetails.UsernameNotFoundException;
+import org.apache.commons.codec.digest.DigestUtils;
+import org.springframework.util.StringUtils;
 
 /**
  * Listens to incoming TCP connections from JNLP slave agents and CLI.
@@ -167,6 +179,8 @@ public final class TcpSlaveAgentListener extends Thread {
                         runJnlpConnect(in, out);
                     } else if(protocol.equals("CLI-connect")) {
                             runCliConnect(in, out);
+                    } else if(protocol.equals("CLI-connect-authenticated")) {
+                        runCliConnectAuthenticated(in, out);
                     } else {
                         error(out, "Unknown protocol:" + s);
                     }
@@ -202,6 +216,63 @@ public final class TcpSlaveAgentListener extends Thread {
             channel.setProperty(CliEntryPoint.class.getName(),new CliManagerImpl(null));
             channel.join();
         }
+        
+        /**
+         * Handles authenticated CLI connection request.
+         */
+        private void runCliConnectAuthenticated(DataInputStream in, PrintWriter out) throws IOException, InterruptedException {
+        	String cookie = in.readUTF();
+			String[] cookieTokens = StringUtils.delimitedListToStringArray(cookie, ":");
+			long tokenExpiryTime;
+
+			try {
+				tokenExpiryTime = new Long(cookieTokens[1]).longValue();
+			}
+			catch (NumberFormatException nfe) {
+				out.println("invalid format for tokenExpiryTime");
+				return;
+			}
+
+			if (tokenExpiryTime < System.currentTimeMillis()) {
+				out.println("token expired");
+				return;
+			}
+
+			UserDetailsService uds = Hudson.getInstance().getSecurityRealm().getSecurityComponents().userDetails;
+			UserDetails userDetails = null;
+
+			try {
+				userDetails = uds.loadUserByUsername(cookieTokens[0]);
+			}
+			catch (UsernameNotFoundException notFound) {
+				out.println("unknown user " + cookieTokens[0]);
+				return;
+			}
+			
+			String expectedTokenSignature = DigestUtils.md5Hex(cookieTokens[0] + ":" + tokenExpiryTime
+					+ ":" + "N/A" + ":" + Hudson.getInstance().getSecretKey());
+			if (!expectedTokenSignature.equals(cookieTokens[2])) {
+				out.println("invalid cookie");
+				return;
+			}
+			
+			RememberMeAuthenticationToken auth = new RememberMeAuthenticationToken(Hudson.getInstance().getSecretKey(), userDetails,
+					userDetails.getAuthorities());
+			// TODO setDetails
+			
+			try {
+				out.println("Welcome");
+				Channel channel = new Channel("CLI channel from " + s.getInetAddress(),
+						Computer.threadPoolForRemoting, Mode.BINARY,
+						new BufferedInputStream(new SocketInputStream(this.s)),
+						new BufferedOutputStream(new SocketOutputStream(this.s)), null, true);
+				channel.setProperty(CliEntryPoint.class.getName(),new CliManagerImpl(auth));
+				channel.join();
+			} finally {
+				SecurityContextHolder.getContext().setAuthentication(null);
+			}
+        }
+        
 
         /**
          * Handles JNLP slave agent connection request.
