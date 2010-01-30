@@ -160,7 +160,11 @@ THE SOFTWARE.
       	</exclusion>
       </exclusions>
     </dependency>
-
+    <dependency>
+      <groupId>org.jvnet.hudson</groupId>
+      <artifactId>htmlunit-core-js</artifactId>
+      <version>2.6-hudson-1</version>
+	</dependency>
     <dependency>
       <groupId>org.jvnet.hudson</groupId>
       <artifactId>embedded-rhino-debugger</artifactId>
