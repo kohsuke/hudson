@@ -759,7 +759,6 @@ public final class MavenModuleSet extends AbstractMavenProject<MavenModuleSet,Ma
         return FormValidation.ok();
     }
 
-    @Override
     public DescriptorImpl getDescriptor() {
         return DESCRIPTOR;
     }
