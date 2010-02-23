@@ -228,8 +228,26 @@ THE SOFTWARE.
           <groupId>javax.servlet</groupId>
           <artifactId>jsp-api</artifactId>
         </exclusion>
+<!--
+<exclusion>
+  <groupId>org.jvnet.hudson.dom4j</groupId>
+  <artifactId>dom4j</artifactId>
+</exclusion>
+-->
       </exclusions>
     </dependency>
+      <dependency>
+          <groupId>xerces</groupId>
+          <artifactId>xercesImpl</artifactId>
+          <version>2.2.1</version>
+          <scope>provided</scope>
+      </dependency>
+      <dependency>
+          <groupId>jdom</groupId>
+          <artifactId>jdom</artifactId>
+          <version>1.0</version>
+      </dependency>
+      
     <!-- offline profiler API when we need it -->
     <!--dependency>
       <groupId>com.yourkit.api</groupId>
