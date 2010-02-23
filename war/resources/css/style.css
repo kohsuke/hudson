@@ -901,3 +901,44 @@ table.progress-bar.red td.progress-bar-done {
 .tag7 { font-size: 1.70em; }
 .tag8 { font-size: 1.80em; }
 .tag9 { font-size: 1.90em; }
+
+
+table#viewList{ display: block; }
+
+table#viewList tr[style='height: 3px;'] { display: block; margin-bottom: 18px; }
+table#viewList tr[style='height: 3px;'] td { display: none;   }
+table#viewList tr[style='height: 3px;'] td.active {
+  display: block; padding-bottom: 0.5ex; border: 1px solid black !important;
+  background: url(../images/topbar.png) repeat-x;
+  /*background: #B50000 URL(http://www.redhat.com/g/promos/VirtLaunch_Apromo_0209AY_final.png) no-repeat;*/
+  /*background-position: 0 -5px;*/
+  color: white;
+  font-size: 140%;
+}
+table#viewList tr[style='height: 3px;'] td.active:before {  content:"Active: "; font-weight: normal; }
+
+table#viewList tr { display: block; }
+table#viewList * { display: block; border: none !important; } /* default */
+table#viewList a { display: inline; line-height: 1.7em; /* Height of the "buttons". */ }
+
+table#viewList td.noLeft,
+table#viewList td.noRight {
+  display: block;
+  float: left;
+  border: 1px solid gray !important;
+  margin: 1px;
+  background: silver URL(http://www.redhat.com/g/chrome/nav/navPrimeRight3.png);
+  background-position: 0 -5px;
+}
+
+table#viewList td.noLeft:hover,
+table#viewList td.noRight:hover {
+  /*background-position: 0 -46px;*/
+  background: silver url(../images/topbar.png);
+  /*background: silver URL(http://www.redhat.com/g/chrome/nav/navPrimeTabRight.png);*/
+  background-position: 0 0;
+}
+table#viewList td.noLeft:hover a,
+table#viewList td.noRight:hover a {
+  color: white;
+}
