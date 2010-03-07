@@ -32,6 +32,7 @@ import hudson.FilePath;
 import hudson.slaves.WorkspaceList;
 import hudson.slaves.NodeProperty;
 import hudson.slaves.WorkspaceList.Lease;
+import hudson.cli.BuildAuthentication;
 import hudson.matrix.MatrixConfiguration;
 import hudson.model.Fingerprint.BuildPtr;
 import hudson.model.Fingerprint.RangeSet;
@@ -678,6 +679,8 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
             jdk.buildEnvVars(env);
         }
         project.getScm().buildEnvVars(this,env);
+        
+        BuildAuthentication.buildEnvVars(this, env);
 
         if (buildEnvironments!=null)
             for (Environment e : buildEnvironments)

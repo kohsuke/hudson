@@ -23,10 +23,12 @@
  */
 package hudson.security;
 
-import com.thoughtworks.xstream.converters.UnmarshallingContext;
+import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import groovy.lang.Binding;
 import hudson.Extension;
 import hudson.Util;
+import hudson.cli.CLICommand;
+import hudson.cli.UsernamePasswordCliAuthenticator;
 import hudson.diagnosis.OldDataMonitor;
 import hudson.model.Descriptor;
 import hudson.model.Hudson;
@@ -41,7 +43,24 @@ import hudson.util.Protector;
 import hudson.util.Scrambler;
 import hudson.util.XStream2;
 import hudson.util.spring.BeanBuilder;
+
+import java.io.IOException;
+import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
 import net.sf.json.JSONObject;
+
 import org.acegisecurity.Authentication;
 import org.acegisecurity.AuthenticationManager;
 import org.acegisecurity.GrantedAuthority;
@@ -59,20 +78,7 @@ import org.kohsuke.stapler.StaplerResponse;
 import org.springframework.dao.DataAccessException;
 import org.springframework.web.context.WebApplicationContext;
 
-import javax.servlet.Filter;
-import javax.servlet.FilterChain;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
-import java.io.IOException;
-import java.security.SecureRandom;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import com.thoughtworks.xstream.converters.UnmarshallingContext;
 
 /**
  * {@link SecurityRealm} that performs authentication by looking up {@link User}.
@@ -549,6 +555,11 @@ public class HudsonPrivateSecurityRealm extends SecurityRealm implements ModelOb
         }
     };
 
+    @Override
+    public CliAuthenticator createCliAuthenticator(final CLICommand command) {
+        return new UsernamePasswordCliAuthenticator(this, command);
+    }
+    
     @Extension
     public static final class DescriptorImpl extends Descriptor<SecurityRealm> {
         public String getDisplayName() {
