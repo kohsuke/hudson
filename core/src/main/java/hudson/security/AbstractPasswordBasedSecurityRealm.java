@@ -1,7 +1,9 @@
 package hudson.security;
 
 import groovy.lang.Binding;
+import hudson.EnvVars;
 import hudson.FilePath;
+import hudson.cli.BuildAuthentication;
 import hudson.cli.CLICommand;
 import hudson.model.Hudson;
 import hudson.remoting.Callable;
@@ -63,8 +65,21 @@ public abstract class AbstractPasswordBasedSecurityRealm extends SecurityRealm i
             public String passwordFile;
 
             public Authentication authenticate() throws AuthenticationException, IOException, InterruptedException {
-                if (userName==null)
-                    return Hudson.ANONYMOUS;    // no authentication parameter. run as anonymous
+                if (userName==null) {
+                	try {
+						EnvVars envVars = EnvVars.getRemote(command.channel);
+						if (BuildAuthentication.isValid(envVars)) {
+							return ACL.SYSTEM; 
+							// dangerous, but don't care. Don't use this in public Hudson !
+						}
+					} catch (IOException e) {
+						// ignore, fallback to anonymous
+					} catch (InterruptedException e) {
+						// ignore, fallback to anonymous
+					}
+					
+                	return Hudson.ANONYMOUS;    // no authentication parameter. run as anonymous
+                }
 
                 if (passwordFile!=null)
                     try {

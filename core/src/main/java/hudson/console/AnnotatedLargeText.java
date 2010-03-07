@@ -107,7 +107,6 @@ public class AnnotatedLargeText<T> extends LargeText {
         return Stapler.getCurrentRequest().getAttribute("html")!=null;
     }
 
-    @Override
     protected void setContentType(StaplerResponse rsp) {
         rsp.setContentType(isHtml() ? "text/html;charset=UTF-8" : "text/plain;charset=UTF-8");
     }
