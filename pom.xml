@@ -239,6 +239,22 @@ THE SOFTWARE.
   </properties>
 
   <profiles>
+  
+    <profile>
+      <id>eclipse</id>
+      <build>
+        <plugins>
+          <plugin>
+              <artifactId>maven-compiler-plugin</artifactId>
+              <configuration>
+                 <source>1.6</source>  
+                 <target>1.6</target>
+              </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+                                                          
     <profile>
       <id>debug</id>
       <activation>

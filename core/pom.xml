@@ -333,6 +333,11 @@ THE SOFTWARE.
     </dependency>
     <dependency>
       <groupId>org.kohsuke.stapler</groupId>
+      <artifactId>stapler</artifactId>
+      <version>1.137</version>
+    </dependency>
+    <dependency>
+      <groupId>org.kohsuke.stapler</groupId>
       <artifactId>stapler-jelly</artifactId>
       <version>1.137</version>
       <exclusions>
@@ -347,9 +352,9 @@ THE SOFTWARE.
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.kohsuke.stapler</groupId>
-      <artifactId>stapler</artifactId>
-      <version>1.135</version>
+      <groupId>org.jvnet.hudson</groupId>
+      <artifactId>commons-jelly</artifactId>
+      <version>1.1-hudson-20100305</version>
     </dependency>
     <dependency>
       <groupId>org.kohsuke.stapler</groupId>
