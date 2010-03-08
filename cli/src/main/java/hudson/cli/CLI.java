@@ -169,13 +169,18 @@ public class CLI {
             args = Arrays.asList("help"); // default to help
 
         CLI cli = new CLI(new URL(url));
+        int result = 0;
         try {
             // execute the command
             // Arrays.asList is not serializable --- see 6835580
             args = new ArrayList<String>(args);
-            System.exit(cli.execute(args, System.in, System.out, System.err));
+            result = cli.execute(args, System.in, System.out, System.err);
+        } catch (RuntimeException t) {
+        	t.printStackTrace();
+        	result = -1;
         } finally {
             cli.close();
+            System.exit(result);
         }
     }
 
