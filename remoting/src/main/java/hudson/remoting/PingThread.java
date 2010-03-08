@@ -114,7 +114,7 @@ public abstract class PingThread extends Thread {
      * Time out in milliseconds.
      * If the response doesn't come back by then, the channel is considered dead.
      */
-    private static final long TIME_OUT = 4 * 60*1000; // 1 min
+    private static final long TIME_OUT = 10 * 60*1000; // 1 min
 
     private static final Logger LOGGER = Logger.getLogger(PingThread.class.getName());
 }
