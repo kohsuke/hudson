@@ -27,16 +27,21 @@ import com.gargoylesoftware.htmlunit.html.HtmlPage;
 
 import hudson.maven.MavenModuleSet;
 import hudson.maven.MavenModuleSetBuild;
+import hudson.maven.reporters.SurefireAggregatedReport;
 import hudson.model.FreeStyleBuild;
 import hudson.model.FreeStyleProject;
 import hudson.model.Result;
 import hudson.model.AbstractBuild;
 import hudson.tasks.Maven.MavenInstallation;
+import hudson.tasks.junit.ClassResult;
+import hudson.tasks.junit.TestResultAction;
+import hudson.tasks.test.AggregatedTestResultAction.ChildReport;
 
 import org.jvnet.hudson.test.ExtractResourceSCM;
 import org.jvnet.hudson.test.HudsonTestCase;
 import org.jvnet.hudson.test.TouchBuilder;
 
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -48,7 +53,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class TestResultExtensionTest extends HudsonTestCase {
 
-    public void testTrivialRecorder() throws Exception {
+    public void itestTrivialRecorder() throws Exception {
         FreeStyleProject project = createFreeStyleProject("trivialtest");
         TrivialTestResultRecorder recorder = new TrivialTestResultRecorder();
         project.getPublishersList().add(recorder);
@@ -83,11 +88,21 @@ public class TestResultExtensionTest extends HudsonTestCase {
         project.setMaven(mavenInstallation.getName());
         project.setScm(new ExtractResourceSCM(getClass().getResource(
                 "/hudson/maven/maven-surefire-unstable.zip")));
-        project.setGoals("-Dmaven.test.failure.ignore=true clean test");
+        project.setGoals("-Dmaven.test.redirectTestOutputToFile=true -Dmaven.test.failure.ignore=true clean test");
         project.getPublishersList().add(new TrivialTestResultRecorder());
 
         MavenModuleSetBuild build = project.scheduleBuild2(0).get(5, TimeUnit.MINUTES); /* leave room for debugging*/
         assertBuildStatus(Result.UNSTABLE, build);
+        System.out.println(build.getActions());
+        final SurefireAggregatedReport surefireAggregatedReport = build.getAction(SurefireAggregatedReport.class);
+        assertNotNull(surefireAggregatedReport);
+        final AggregatedTestResultAction aggregatedTestResultAction = build.getAction(AggregatedTestResultAction.class);
+        assertNotNull(aggregatedTestResultAction);
+        List<ChildReport> childReports = surefireAggregatedReport.getResult();
+        assertTrue(childReports.size() > 0);
+        ChildReport childReport = childReports.get(0);
+        System.out.println(childReport);
+//        ClassResult cr = testResultAction.getResult().byPackage("test").getClassResult("AppATest");
         TrivialTestResultAction action = build.getAction(TrivialTestResultAction.class);
         assertNotNull("we should have an action", action);
         assertNotNull("parent action should have an owner", action.owner);
