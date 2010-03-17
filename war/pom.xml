@@ -27,7 +27,7 @@ THE SOFTWARE.
   <parent>
     <groupId>org.jvnet.hudson.main</groupId>
     <artifactId>pom</artifactId>
-    <version>1.350-SNAPSHOT</version>
+    <version>1.352-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   
@@ -195,9 +195,9 @@ THE SOFTWARE.
               <value>../core/src/main/resources</value>
             </systemProperty>
             <systemProperty>
-              <!-- enable the maven plugin by default -->
+              <!-- enable the plugins in main by default -->
               <name>hudson.bundled.plugins</name>
-              <value>${basedir}/../maven-plugin/target/test-classes/the.hpl</value>
+              <value>${basedir}/../maven-plugin/target/test-classes/the.hpl,${basedir}/../ui-samples-plugin/target/test-classes/the.hpl</value>
             </systemProperty>
             <systemProperty>
               <!-- stat collection pointless -->

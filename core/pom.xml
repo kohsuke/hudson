@@ -28,7 +28,7 @@ THE SOFTWARE.
   <parent>
     <groupId>org.jvnet.hudson.main</groupId>
     <artifactId>pom</artifactId>
-    <version>1.350-SNAPSHOT</version>
+    <version>1.352-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -232,7 +232,7 @@ THE SOFTWARE.
       </build>
     </profile>
     <profile>
-      <!-- run findbugs for better error detection -->
+      <!-- run FindBugs for better error detection -->
       <id>findbugs</id>
       <reporting>
         <plugins>
@@ -334,7 +334,7 @@ THE SOFTWARE.
     <dependency>
       <groupId>org.kohsuke.stapler</groupId>
       <artifactId>stapler-jelly</artifactId>
-      <version>1.137</version>
+      <version>1.138</version>
       <exclusions>
         <exclusion>
           <groupId>commons-jelly</groupId>
