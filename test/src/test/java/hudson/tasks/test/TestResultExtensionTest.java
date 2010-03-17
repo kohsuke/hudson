@@ -94,16 +94,11 @@ public class TestResultExtensionTest extends HudsonTestCase {
         MavenModuleSetBuild build = project.scheduleBuild2(0).get(5, TimeUnit.MINUTES); /* leave room for debugging*/
         assertBuildStatus(Result.UNSTABLE, build);
         System.out.println(build.getActions());
-        final SurefireAggregatedReport surefireAggregatedReport = build.getAction(SurefireAggregatedReport.class);
-        assertNotNull(surefireAggregatedReport);
         final AggregatedTestResultAction aggregatedTestResultAction = build.getAction(AggregatedTestResultAction.class);
         assertNotNull(aggregatedTestResultAction);
-        List<ChildReport> childReports = surefireAggregatedReport.getResult();
-        assertTrue(childReports.size() > 0);
-        ChildReport childReport = childReports.get(0);
-        System.out.println(childReport);
+        final TestResult testResult = aggregatedTestResultAction.findCorrespondingResult("test.AppATest");
 //        ClassResult cr = testResultAction.getResult().byPackage("test").getClassResult("AppATest");
-        TrivialTestResultAction action = build.getAction(TrivialTestResultAction.class);
+        TrivialTestResultAction action = testResult.getTestAction(TrivialTestResultAction.class);
         assertNotNull("we should have an action", action);
         assertNotNull("parent action should have an owner", action.owner);
         Object resultObject = action.getResult();
