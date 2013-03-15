@@ -37,7 +37,6 @@ import hudson.model.Executor;
  * Gate-keeper that controls access to Hudson's model objects.
  *
  * @author Kohsuke Kawaguchi
- * @see http://wiki.jenkins-ci.org/display/JENKINS/Making+your+plugin+behave+in+secured+Hudson
  */
 public abstract class ACL {
     /**
@@ -108,11 +107,6 @@ public abstract class ACL {
      * <p>
      * This is used when Hudson is performing computation for itself, instead
      * of acting on behalf of an user, such as doing builds.
-     *
-     * <p>
-     * (Note that one of the features being considered is to keep track of who triggered
-     * a build &mdash; so in a future, perhaps {@link Executor} will run on behalf of
-     * the user who triggered a build.)
      */
     public static final Authentication SYSTEM = new UsernamePasswordAuthenticationToken("SYSTEM","SYSTEM");
 
@@ -127,6 +121,7 @@ public abstract class ACL {
      * <p>
      * We need to create a new {@link SecurityContext} instead of {@link SecurityContext#setAuthentication(Authentication)}
      * because the same {@link SecurityContext} object is reused for all the concurrent requests from the same session.
+     * @since 1.462
      */
     public static SecurityContext impersonate(Authentication auth) {
         SecurityContext old = SecurityContextHolder.getContext();

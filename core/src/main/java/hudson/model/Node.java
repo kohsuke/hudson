@@ -57,8 +57,10 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.List;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
 
 import jenkins.model.Jenkins;
+import jenkins.util.io.OnMaster;
 import net.sf.json.JSONObject;
 import org.kohsuke.stapler.BindInterceptor;
 import org.kohsuke.stapler.Stapler;
@@ -77,7 +79,7 @@ import org.kohsuke.stapler.export.Exported;
  * @see NodeDescriptor
  */
 @ExportedBean
-public abstract class Node extends AbstractModelObject implements ReconfigurableDescribable<Node>, ExtensionPoint, AccessControlled {
+public abstract class Node extends AbstractModelObject implements ReconfigurableDescribable<Node>, ExtensionPoint, AccessControlled, OnMaster {
 
     private static final Logger LOGGER = Logger.getLogger(Node.class.getName());
 
@@ -158,7 +160,7 @@ public abstract class Node extends AbstractModelObject implements Reconfigurable
      *      this method can return null if there's no {@link Computer} object for this node,
      *      such as when this node has no executors at all.
      */
-    public final Computer toComputer() {
+    public final @CheckForNull Computer toComputer() {
         AbstractCIBase ciBase = Jenkins.getInstance();
         return ciBase.getComputer(this);
     }
@@ -168,7 +170,7 @@ public abstract class Node extends AbstractModelObject implements Reconfigurable
      *
      * This is just a convenience method for {@link Computer#getChannel()} with null check. 
      */
-    public final VirtualChannel getChannel() {
+    public final @CheckForNull VirtualChannel getChannel() {
         Computer c = toComputer();
         return c==null ? null : c.getChannel();
     }
@@ -271,6 +273,17 @@ public abstract class Node extends AbstractModelObject implements Reconfigurable
     public abstract String getLabelString();
 
     /**
+     * Sets the label string for a node. This value will be returned by {@link #getLabelString()}.
+     *
+     * @param labelString
+     *      The new label string to use.
+     * @since 1.477
+     */
+    public void setLabelString(String labelString) throws IOException {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Gets the special label that represents this node itself.
      */
     @WithBridgeMethods(Label.class)
@@ -352,7 +365,7 @@ public abstract class Node extends AbstractModelObject implements Reconfigurable
     /**
      * Gets the {@link FilePath} on this node.
      */
-    public FilePath createPath(String absolutePath) {
+    public @CheckForNull FilePath createPath(String absolutePath) {
         VirtualChannel ch = getChannel();
         if(ch==null)    return null;    // offline
         return new FilePath(ch,absolutePath);

@@ -25,11 +25,14 @@
 package hudson.model;
 
 import hudson.EnvVars;
+import hudson.Launcher.ProcStarter;
 import hudson.Util;
 import hudson.cli.declarative.CLIMethod;
 import hudson.cli.declarative.CLIResolver;
 import hudson.console.AnnotatedLargeText;
+import hudson.init.Initializer;
 import hudson.model.Descriptor.FormException;
+import hudson.model.labels.LabelAtom;
 import hudson.model.queue.WorkUnit;
 import hudson.node_monitors.NodeMonitor;
 import hudson.remoting.Channel;
@@ -42,6 +45,7 @@ import hudson.security.PermissionGroup;
 import hudson.security.PermissionScope;
 import hudson.slaves.ComputerLauncher;
 import hudson.slaves.ComputerListener;
+import hudson.slaves.NodeProperty;
 import hudson.slaves.RetentionStrategy;
 import hudson.slaves.WorkspaceList;
 import hudson.slaves.OfflineCause;
@@ -72,6 +76,7 @@ import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import javax.servlet.ServletException;
 import java.io.File;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -88,6 +93,10 @@ import java.nio.charset.Charset;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.Inet4Address;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nullable;
 
 import static javax.servlet.http.HttpServletResponse.*;
 
@@ -181,11 +190,21 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     	return result;
     }
 
+    @Override
+    public void addAction(Action a) {
+        if(a==null) throw new IllegalArgumentException();
+        super.getActions().add(a);
+    }
+
     /**
      * This is where the log from the remote agent goes.
+     *
+     * @see #relocateOldLogs()
      */
     protected File getLogFile() {
-        return new File(Jenkins.getInstance().getRootDir(),"slave-"+nodeName+".log");
+        File dir = new File(Jenkins.getInstance().getRootDir(),"logs/slaves/"+nodeName);
+        dir.mkdirs();
+        return new File(dir,"slave.log");
     }
 
     /**
@@ -234,12 +253,35 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     }
 
     /**
+     * If the computer was offline (either temporarily or not),
+     * this method will return the cause as a string (without user info).
+     *
+     * @return
+     *      empty string if the system was put offline without given a cause.
+     */
+    @Exported
+    public String getOfflineCauseReason() {
+        if (offlineCause == null) {
+            return "";
+        }
+        // fetch the localized string for "Disconnected By"
+        String gsub_base = hudson.slaves.Messages.SlaveComputer_DisconnectedBy("","");
+        // regex to remove commented reason base string
+        String gsub1 = "^" + gsub_base + "[\\w\\W]* \\: ";
+        // regex to remove non-commented reason base string
+        String gsub2 = "^" + gsub_base + "[\\w\\W]*";
+
+        String newString = offlineCause.toString().replaceAll(gsub1, "");
+        return newString.replaceAll(gsub2, "");
+    }
+
+    /**
      * Gets the channel that can be used to run a program on this computer.
      *
      * @return
      *      never null when {@link #isOffline()}==false.
      */
-    public abstract VirtualChannel getChannel();
+    public abstract @Nullable VirtualChannel getChannel();
 
     /**
      * Gets the default charset of this computer.
@@ -419,7 +461,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
      *      null if the configuration has changed and the node is removed, yet the corresponding {@link Computer}
      *      is not yet gone.
      */
-    public Node getNode() {
+    public @CheckForNull Node getNode() {
         if(nodeName==null)
             return Jenkins.getInstance();
         return Jenkins.getInstance().getNode(nodeName);
@@ -427,7 +469,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
 
     @Exported
     public LoadStatistics getLoadStatistics() {
-        return getNode().getSelfLabel().loadStatistics;
+        return LabelAtom.get(nodeName != null ? nodeName : "").loadStatistics;
     }
 
     public BuildTimelineWidget getTimeline() {
@@ -539,7 +581,10 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     public void setTemporarilyOffline(boolean temporarilyOffline, OfflineCause cause) {
         offlineCause = temporarilyOffline ? cause : null;
         this.temporarilyOffline = temporarilyOffline;
-        getNode().setTemporaryOfflineCause(offlineCause);
+        Node node = getNode();
+        if (node != null) {
+            node.setTemporaryOfflineCause(offlineCause);
+        }
         Jenkins.getInstance().getQueue().scheduleMaintenance();
         synchronized (statusChangeLock) {
             statusChangeLock.notifyAll();
@@ -838,6 +883,36 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     }
 
     /**
+     * Creates an environment variable override to be used for launching processes on this node.
+     *
+     * @see ProcStarter#envs(Map)
+     * @since 1.489
+     */
+    public EnvVars buildEnvironment(TaskListener listener) throws IOException, InterruptedException {
+        EnvVars env = new EnvVars();
+
+        Node node = getNode();
+        if (node==null)     return env; // bail out
+
+        for (NodeProperty nodeProperty: Jenkins.getInstance().getGlobalNodeProperties()) {
+            nodeProperty.buildEnvVars(env,listener);
+        }
+
+        for (NodeProperty nodeProperty: node.getNodeProperties()) {
+            nodeProperty.buildEnvVars(env,listener);
+        }
+
+        // TODO: hmm, they don't really belong
+        String rootUrl = Hudson.getInstance().getRootUrl();
+        if(rootUrl!=null) {
+            env.put("HUDSON_URL", rootUrl); // Legacy.
+            env.put("JENKINS_URL", rootUrl);
+        }
+
+        return env;
+    }
+
+    /**
      * Gets the thread dump of the slave JVM.
      * @return
      *      key is the thread name, and the value is the pre-formatted dump.
@@ -992,6 +1067,16 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
         return HttpResponses.redirectToDot();
     }
 
+    public HttpResponse doChangeOfflineCause(@QueryParameter String offlineMessage) throws IOException, ServletException {
+        checkPermission(DISCONNECT);
+        offlineMessage = Util.fixEmptyAndTrim(offlineMessage);
+        setTemporarilyOffline(true,
+                OfflineCause.create(hudson.slaves.Messages._SlaveComputer_DisconnectedBy(
+                    Jenkins.getAuthentication().getName(),
+                    offlineMessage!=null ? " : " + offlineMessage : "")));
+        return HttpResponses.redirectToDot();
+    }
+
     public Api getApi() {
         return new Api(this);
     }
@@ -1045,9 +1130,8 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     }
 
     protected void _doScript( StaplerRequest req, StaplerResponse rsp, String view) throws IOException, ServletException {
-        // ability to run arbitrary script is dangerous,
-        // so tie it to the admin access
-        checkPermission(Jenkins.ADMINISTER);
+        // ability to run arbitrary script is dangerous
+        checkPermission(Jenkins.RUN_SCRIPTS);
 
         String text = req.getParameter("script");
         if(text!=null) {
@@ -1072,7 +1156,11 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
         String name = Util.fixEmptyAndTrim(req.getSubmittedForm().getString("name"));
         Jenkins.checkGoodName(name);
         
-        Node result = getNode().reconfigure(req, req.getSubmittedForm());
+        Node node = getNode();
+        if (node == null) {
+            throw new ServletException("No such node " + nodeName);
+        }
+        Node result = node.reconfigure(req, req.getSubmittedForm());
         replaceBy(result);
 
         // take the user back to the slave top page.
@@ -1089,7 +1177,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
         if (req.getMethod().equals("GET")) {
             // read
             rsp.setContentType("application/xml");
-            Jenkins.XSTREAM2.toXML(getNode(), rsp.getOutputStream());
+            Jenkins.XSTREAM2.toXMLUTF8(getNode(), rsp.getOutputStream());
             return;
         }
         if (req.getMethod().equals("POST")) {
@@ -1129,7 +1217,13 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     @CLIMethod(name="delete-node")
     public HttpResponse doDoDelete() throws IOException {
         checkPermission(DELETE);
-        Jenkins.getInstance().removeNode(getNode());
+        Node node = getNode();
+        if (node != null) {
+            Jenkins.getInstance().removeNode(node);
+        } else {
+            AbstractCIBase app = Jenkins.getInstance();
+            app.removeComputer(this);
+        }
         return new HttpRedirect("..");
     }
 
@@ -1198,13 +1292,47 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
         return item;
     }
 
+    /**
+     * Relocate log files in the old location to the new location.
+     *
+     * Files were used to be $JENKINS_ROOT/slave-NAME.log (and .1, .2, ...)
+     * but now they are at $JENKINS_ROOT/logs/slaves/NAME/slave.log (and .1, .2, ...)
+     *
+     * @see #getLogFile()
+     */
+    @Initializer
+    public static void relocateOldLogs() {
+        relocateOldLogs(Jenkins.getInstance().getRootDir());
+    }
+
+    /*package*/ static void relocateOldLogs(File dir) {
+        final Pattern logfile = Pattern.compile("slave-(.*)\\.log(\\.[0-9]+)?");
+        File[] logfiles = dir.listFiles(new FilenameFilter() {
+            public boolean accept(File dir, String name) {
+                return logfile.matcher(name).matches();
+            }
+        });
+        if (logfiles==null)     return;
+
+        for (File f : logfiles) {
+            Matcher m = logfile.matcher(f.getName());
+            if (m.matches()) {
+                File newLocation = new File(dir, "logs/slaves/" + m.group(1) + "/slave.log" + Util.fixNull(m.group(2)));
+                newLocation.getParentFile().mkdirs();
+                f.renameTo(newLocation);
+            } else {
+                assert false;
+            }
+        }
+    }
+
     public static final PermissionGroup PERMISSIONS = new PermissionGroup(Computer.class,Messages._Computer_Permissions_Title());
     /**
      * Permission to configure slaves.
      */
     public static final Permission CONFIGURE = new Permission(PERMISSIONS,"Configure", Messages._Computer_ConfigurePermission_Description(), Permission.CONFIGURE, PermissionScope.COMPUTER);
     public static final Permission DELETE = new Permission(PERMISSIONS,"Delete", Messages._Computer_DeletePermission_Description(), Permission.DELETE, PermissionScope.COMPUTER);
-    public static final Permission CREATE = new Permission(PERMISSIONS,"Create", Messages._Computer_CreatePermission_Description(), Permission.CREATE);
+    public static final Permission CREATE = new Permission(PERMISSIONS,"Create", Messages._Computer_CreatePermission_Description(), Permission.CREATE, PermissionScope.COMPUTER);
     public static final Permission DISCONNECT = new Permission(PERMISSIONS,"Disconnect", Messages._Computer_DisconnectPermission_Description(), Jenkins.ADMINISTER, PermissionScope.COMPUTER);
     public static final Permission CONNECT = new Permission(PERMISSIONS,"Connect", Messages._Computer_ConnectPermission_Description(), DISCONNECT, PermissionScope.COMPUTER);
 

@@ -31,7 +31,6 @@ import hudson.BulkChange;
 import hudson.Util;
 import hudson.model.listeners.SaveableListener;
 import hudson.util.FormApply;
-import hudson.util.QuotedStringTokenizer;
 import hudson.util.ReflectionUtils;
 import hudson.util.ReflectionUtils.Parameter;
 import hudson.views.ListViewColumn;
@@ -72,6 +71,8 @@ import java.lang.reflect.Type;
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.beans.Introspector;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
 
 /**
  * Metadata about a configurable instance.
@@ -193,6 +194,9 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
 
         public Descriptor getItemTypeDescriptorOrDie() {
             Class it = getItemType();
+            if (it == null) {
+                throw new AssertionError(clazz + " is not an array/collection type in " + displayName + ". See https://wiki.jenkins-ci.org/display/JENKINS/My+class+is+missing+descriptor");
+            }
             Descriptor d = Jenkins.getInstance().getDescriptor(it);
             if (d==null)
                 throw new AssertionError(it +" is missing its descriptor in "+displayName+". See https://wiki.jenkins-ci.org/display/JENKINS/My+class+is+missing+descriptor");
@@ -200,10 +204,17 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
         }
 
         /**
-         * Returns all the descriptors that produce types assignable to the item type.
+         * Returns all the descriptors that produce types assignable to the property type.
          */
         public List<? extends Descriptor> getApplicableDescriptors() {
             return Jenkins.getInstance().getDescriptorList(clazz);
+        }
+
+        /**
+         * Returns all the descriptors that produce types assignable to the item type for a collection property.
+         */
+        public List<? extends Descriptor> getApplicableItemDescriptors() {
+            return Jenkins.getInstance().getDescriptorList(getItemType());
         }
     }
 
@@ -212,7 +223,7 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
      *
      * @see #getHelpFile(String) 
      */
-    private final Map<String,String> helpRedirect = new HashMap<String, String>();
+    private transient final Map<String,String> helpRedirect = new HashMap<String, String>();
 
     /**
      *
@@ -460,9 +471,25 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
     /**
      * Used by Jelly to abstract away the handlign of global.jelly vs config.jelly databinding difference.
      */
-    public PropertyType getPropertyType(Object instance, String field) {
+    public @CheckForNull PropertyType getPropertyType(@Nonnull Object instance, @Nonnull String field) {
         // in global.jelly, instance==descriptor
         return instance==this ? getGlobalPropertyType(field) : getPropertyType(field);
+    }
+
+    /**
+     * Akin to {@link #getPropertyType(Object,String) but never returns null.
+     * @throws AssertionError in case the field cannot be found
+     * @since 1.492
+     */
+    public @Nonnull PropertyType getPropertyTypeOrDie(@Nonnull Object instance, @Nonnull String field) {
+        PropertyType propertyType = getPropertyType(instance, field);
+        if (propertyType != null) {
+            return propertyType;
+        } else if (instance == this) {
+            throw new AssertionError(getClass().getName() + " has no property " + field);
+        } else {
+            throw new AssertionError(clazz.getName() + " has no property " + field);
+        }
     }
 
     /**
@@ -782,7 +809,7 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
         }
     }
 
-    private XmlFile getConfigFile() {
+    protected final XmlFile getConfigFile() {
         return new XmlFile(new File(Jenkins.getInstance().getRootDir(),getId()+".xml"));
     }
 
@@ -909,7 +936,10 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
             for (Object o : JSONArray.fromObject(formData)) {
                 JSONObject jo = (JSONObject)o;
                 String kind = jo.getString("kind");
-                items.add(find(descriptors,kind).newInstance(req,jo));
+                Descriptor<T> d = find(descriptors, kind);
+                if (d != null) {
+                    items.add(d.newInstance(req, jo));
+                }
             }
         }
 
@@ -919,7 +949,7 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
     /**
      * Finds a descriptor from a collection by its class name.
      */
-    public static <T extends Descriptor> T find(Collection<? extends T> list, String className) {
+    public static @CheckForNull <T extends Descriptor> T find(Collection<? extends T> list, String className) {
         for (T d : list) {
             if(d.getClass().getName().equals(className))
                 return d;
@@ -933,7 +963,7 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
         return null;
     }
 
-    public static Descriptor find(String className) {
+    public static @CheckForNull Descriptor find(String className) {
         return find(Jenkins.getInstance().getExtensionList(Descriptor.class),className);
     }
 

@@ -38,7 +38,6 @@ import hudson.security.ACL;
 import jenkins.model.InterruptedBuildAction;
 import jenkins.model.Jenkins;
 import org.acegisecurity.Authentication;
-import org.acegisecurity.context.SecurityContext;
 import org.acegisecurity.providers.anonymous.AnonymousAuthenticationToken;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.HttpResponses;
@@ -46,7 +45,6 @@ import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.export.ExportedBean;
 import org.kohsuke.stapler.export.Exported;
-import org.acegisecurity.context.SecurityContextHolder;
 
 import javax.servlet.ServletException;
 import java.io.IOException;
@@ -58,8 +56,8 @@ import java.util.logging.Level;
 import java.lang.reflect.Method;
 
 import static hudson.model.queue.Executables.*;
-import static java.util.Arrays.asList;
 import static java.util.logging.Level.FINE;
+import org.kohsuke.stapler.interceptor.RequirePOST;
 
 
 /**
@@ -468,15 +466,26 @@ public class Executor extends Thread implements ModelObject {
     }
 
     /**
-     * Stops the current build.
+     * @deprecated as of 1.489
+     *      Use {@link #doStop()}.
      */
+    @RequirePOST
     public void doStop( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
+        doStop().generateResponse(req,rsp,this);
+    }
+
+    /**
+     * Stops the current build.
+     * 
+     * @since 1.489
+     */
+    public HttpResponse doStop() {
         Queue.Executable e = executable;
         if(e!=null) {
             Tasks.getOwnerTaskOf(getParentOf(e)).checkAbortPermission();
             interrupt();
         }
-        rsp.forwardToPreviousPage(req);
+        return HttpResponses.forwardToPreviousPage();
     }
 
     /**

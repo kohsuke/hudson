@@ -66,7 +66,18 @@ var breadcrumbs = (function() {
         return a+'/'+b+qs;
     }
 
+    function postRequest(action, event, url) {
+        new Ajax.Request(url);
+        if (event.length == 1 && event[0].target != null) {
+            hoverNotification('Done.', event[0].target);
+        }
+    }
+
     /**
+     * Called when the mouse cursor comes into the context menu hot spot.
+     *
+     * If the mouse stays there for a while, a context menu gets displayed.
+     *
      * @param {HTMLElement} e
      *      anchor tag
      * @param {Number} delay
@@ -87,6 +98,7 @@ var breadcrumbs = (function() {
                     menu.addItems(items);
                     menu.render("breadcrumb-menu-target");
                     menu.show();
+                    $(menu.getItem(0).element).addClassName("yui-menuitem-tooltip")
                 }
                 menuDelay = null;
             },delay);
@@ -102,9 +114,23 @@ var breadcrumbs = (function() {
             xhr = new Ajax.Request(combinePath(e.getAttribute("href"),"contextMenu"), {
                 onComplete:function (x) {
                     var a = x.responseText.evalJSON().items;
-                    a.each(function (e) {
+                    function fillMenuItem(e) {
                         e.text = makeMenuHtml(e.icon, e.displayName);
-                    });
+                        if (e.subMenu!=null)
+                            e.subMenu = {id:"submenu"+(iota++), itemdata:e.subMenu.items.each(fillMenuItem)};
+                        if (e.post) {
+                            e.onclick = {fn: postRequest, obj: e.url};
+                            delete e.url;
+                        }
+                    }
+                    a.each(fillMenuItem);
+
+                    var tooltip = e.getAttribute('tooltip');
+                    if (tooltip) {
+                        // join the tooltip into the context menu. color #000 to cancel out the text effect on disabled menu items
+                        a.unshift({text:"<div class='yui-menu-tooltip'>"+tooltip+"</div>", disabled:true})
+                    }
+
                     e.items = function() { return a };
                     showMenu(a);
                 }
@@ -114,15 +140,17 @@ var breadcrumbs = (function() {
         return false;
     }
 
-    jenkinsRules["#breadcrumbs LI"] = function (e) {
+    Behaviour.specify("#breadcrumbs LI", 'breadcrumbs', 0, function (e) {
         // when the mouse hovers over LI, activate the menu
-        $(e).observe("mouseover", function () { handleHover(e.firstChild,0) });
-    };
+        e = $(e);
+        if (e.hasClassName("no-context-menu"))  return;
+        e.observe("mouseover", function () { handleHover(e.firstChild,0) });
+    });
 
-    jenkinsRules["A.model-link"] = function (a) {
+    Behaviour.specify("A.model-link", 'breadcrumbs', 0, function (a) {
         // ditto for model-link, but give it a larger delay to avoid unintended menus to be displayed
         $(a).observe("mouseover", function () { handleHover(a,500); });
-    };
+    });
 
     /**
      * @namespace breadcrumbs

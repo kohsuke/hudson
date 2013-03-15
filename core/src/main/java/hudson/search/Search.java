@@ -49,9 +49,14 @@ import org.kohsuke.stapler.export.ExportedBean;
 import org.kohsuke.stapler.export.Flavor;
 
 /**
- * Web-bound object that serves QuickSilver-like search requests.
+ * Web-bound object that provides search/navigation capability.
+ *
+ * <p>
+ * This object is bound to "./search" of a model object via {@link SearchableModelObject} and serves
+ * HTTP requests coming from JavaScript to provide search result and auto-completion.
  *
  * @author Kohsuke Kawaguchi
+ * @see SearchableModelObject
  */
 public class Search {
     public void doIndex(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
@@ -92,6 +97,7 @@ public class Search {
      * See http://developer.mozilla.org/en/docs/Supporting_search_suggestions_in_search_plugins
      */
     public void doSuggestOpenSearch(StaplerRequest req, StaplerResponse rsp, @QueryParameter String q) throws IOException, ServletException {
+        rsp.setContentType(Flavor.JSON.contentType);
         DataWriter w = Flavor.JSON.createDataWriter(null, rsp);
         w.startArray();
         w.value(q);
@@ -121,11 +127,15 @@ public class Search {
      *      can be empty but never null. The size of the list is always smaller than
      *      a certain threshold to avoid showing too many options. 
      */
-    public List<SuggestedItem> getSuggestions(StaplerRequest req, String query) {
+    public SearchResult getSuggestions(StaplerRequest req, String query) {
         Set<String> paths = new HashSet<String>();  // paths already added, to control duplicates
-        List<SuggestedItem> r = new ArrayList<SuggestedItem>();
+        SearchResultImpl r = new SearchResultImpl();
+        int max = req.hasParameter("max") ? Integer.parseInt(req.getParameter("max")) : 20;
         for (SuggestedItem i : suggest(makeSuggestIndex(req), query)) {
-            if(r.size()>20) break;
+            if(r.size()>=max) {
+                r.hasMoreResults = true;
+                break;
+            }
             if(paths.add(i.getPath()))
                 r.add(i);
         }
@@ -144,6 +154,15 @@ public class Search {
             }
         }
         return builder.make();
+    }
+
+    private static class SearchResultImpl extends ArrayList<SuggestedItem> implements SearchResult {
+
+        private boolean hasMoreResults = false;
+
+        public boolean hasMoreResults() {
+            return hasMoreResults;
+        }
     }
 
     @ExportedBean

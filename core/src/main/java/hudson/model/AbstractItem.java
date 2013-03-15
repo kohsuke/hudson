@@ -34,7 +34,6 @@ import hudson.cli.declarative.CLIMethod;
 import hudson.cli.declarative.CLIResolver;
 import hudson.model.listeners.ItemListener;
 import hudson.model.listeners.SaveableListener;
-import hudson.search.SearchIndexBuilder;
 import hudson.security.AccessControlled;
 import hudson.security.Permission;
 import hudson.security.ACL;
@@ -65,6 +64,7 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import javax.servlet.ServletException;
+import javax.xml.transform.Source;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
@@ -546,7 +546,7 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
         }
         if (req.getMethod().equals("POST")) {
             // submission
-            updateByXml(new StreamSource(req.getReader()));
+            updateByXml((Source)new StreamSource(req.getReader()));
             return;
         }
 
@@ -555,9 +555,17 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
     }
 
     /**
-     * Updates Job by its XML definition.
+     * @deprecated as of 1.473
+     *      Use {@link #updateByXml(Source)}
      */
     public void updateByXml(StreamSource source) throws IOException {
+        updateByXml((Source)source);
+    }
+
+    /**
+     * Updates Job by its XML definition.
+     */
+    public void updateByXml(Source source) throws IOException {
         checkPermission(CONFIGURE);
         XmlFile configXmlFile = getConfigFile();
         AtomicFileWriter out = new AtomicFileWriter(configXmlFile.getFile());
@@ -577,7 +585,12 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
 
             // try to reflect the changes by reloading
             new XmlFile(Items.XSTREAM, out.getTemporaryFile()).unmarshal(this);
-            onLoad(getParent(), getRootDir().getName());
+            Items.updatingByXml.set(true);
+            try {
+                onLoad(getParent(), getRootDir().getName());
+            } finally {
+                Items.updatingByXml.set(false);
+            }
             Jenkins.getInstance().rebuildDependencyGraph();
 
             // if everything went well, commit this new version
@@ -587,7 +600,7 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
             out.abort(); // don't leave anything behind
         }
     }
-    
+
 
     /* (non-Javadoc)
      * @see hudson.model.AbstractModelObject#getSearchName()

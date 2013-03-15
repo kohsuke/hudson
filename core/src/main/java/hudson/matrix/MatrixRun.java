@@ -26,11 +26,10 @@ package hudson.matrix;
 import hudson.EnvVars;
 import hudson.FilePath;
 import hudson.model.AbstractBuild;
-import hudson.model.TopLevelItem;
-import hudson.slaves.WorkspaceList;
-import hudson.slaves.WorkspaceList.Lease;
 import hudson.model.Build;
 import hudson.model.Node;
+import hudson.slaves.WorkspaceList;
+import hudson.slaves.WorkspaceList.Lease;
 import org.kohsuke.stapler.Ancestor;
 import org.kohsuke.stapler.Stapler;
 import org.kohsuke.stapler.StaplerRequest;
@@ -144,10 +143,10 @@ public class MatrixRun extends Build<MatrixConfiguration,MatrixRun> {
 
     @Override
     public void run() {
-        run(new RunnerImpl());
+        execute(new MatrixRunExecution());
     }
 
-    protected class RunnerImpl extends Build<MatrixConfiguration,MatrixRun>.RunnerImpl {
+    private class MatrixRunExecution extends BuildExecution {
         protected Lease getParentWorkspaceLease(Node n, WorkspaceList wsl) throws InterruptedException, IOException {
             MatrixProject mp = getParent().getParent();
 
@@ -177,6 +176,7 @@ public class MatrixRun extends Build<MatrixConfiguration,MatrixRun> {
             env.put("COMBINATION",getParent().getCombination().toString('/','/'));  // e.g., "axis1/a/axis2/b"
             env.put("SHORT_COMBINATION",getParent().getDigestName());               // e.g., "0fbcab35"
             env.put("PARENT_WORKSPACE",baseDir.getRemote());
+            env.putAll(getBuildVariables());
 
             // child workspace need no individual locks, whether or not we use custom workspace
             String childWs = mp.getChildCustomWorkspace();

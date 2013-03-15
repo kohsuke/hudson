@@ -23,6 +23,7 @@
  */
 package hudson.maven;
 
+import hudson.model.AbstractProject;
 import hudson.model.Item;
 import hudson.model.Result;
 import hudson.tasks.Maven.MavenInstallation;
@@ -30,23 +31,37 @@ import hudson.tasks.Shell;
 
 import java.io.File;
 
+import jenkins.model.Jenkins;
+
 import org.junit.Assert;
 import org.jvnet.hudson.test.Bug;
 import org.jvnet.hudson.test.ExtractResourceSCM;
 import org.jvnet.hudson.test.HudsonTestCase;
 
-import com.gargoylesoftware.htmlunit.FailingHttpStatusCodeException;
+import java.net.HttpURLConnection;
 
 /**
  * @author huybrechts
  */
 public class MavenProjectTest extends HudsonTestCase {
+    
 
     public void testOnMaster() throws Exception {
         MavenModuleSet project = createSimpleProject();
         project.setGoals("validate");
 
         buildAndAssertSuccess(project);
+    }
+    
+    @Bug(16499)
+    public void testCopyFromExistingMavenProject() throws Exception {
+        MavenModuleSet project = createSimpleProject();
+        project.setGoals("abcdefg");
+        project.save();
+        
+        MavenModuleSet copy = (MavenModuleSet) Jenkins.getInstance().copy((AbstractProject<?, ?>)project, "copy" + System.currentTimeMillis());
+        assertNotNull("Copied project must not be null", copy);
+        assertEquals(project.getGoals(), copy.getGoals());
     }
 
     private MavenModuleSet createSimpleProject() throws Exception {
@@ -83,12 +98,7 @@ public class MavenProjectTest extends HudsonTestCase {
         // this should succeed
         HudsonTestCase.WebClient wc = new WebClient();
         wc.getPage(project,"site");
-        try {
-            wc.getPage(project,"site/no-such-file");
-            fail("should have resulted in 404");
-        } catch (FailingHttpStatusCodeException e) {
-            assertEquals(404,e.getStatusCode());
-        }
+        wc.assertFails(project.getUrl() + "site/no-such-file", HttpURLConnection.HTTP_NOT_FOUND);
     }
 
     /**

@@ -25,6 +25,8 @@
  */
 package hudson;
 
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import hudson.cli.CLICommand;
 import hudson.console.ConsoleAnnotationDescriptor;
 import hudson.console.ConsoleAnnotatorFactory;
@@ -33,6 +35,7 @@ import hudson.model.ParameterDefinition.ParameterDescriptor;
 import hudson.search.SearchableModelObject;
 import hudson.security.AccessControlled;
 import hudson.security.AuthorizationStrategy;
+import hudson.security.GlobalSecurityConfiguration;
 import hudson.security.Permission;
 import hudson.security.SecurityRealm;
 import hudson.security.captcha.CaptchaSupport;
@@ -57,7 +60,10 @@ import hudson.views.MyViewsTabBar;
 import hudson.views.ViewsTabBar;
 import hudson.widgets.RenderOnDemandClosure;
 import jenkins.model.GlobalConfiguration;
+import jenkins.model.GlobalConfigurationCategory;
+import jenkins.model.GlobalConfigurationCategory.Unclassified;
 import jenkins.model.Jenkins;
+import jenkins.model.ModelObjectWithContextMenu;
 import org.acegisecurity.providers.anonymous.AnonymousAuthenticationToken;
 import org.apache.commons.jelly.JellyContext;
 import org.apache.commons.jelly.JellyTagException;
@@ -73,7 +79,6 @@ import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.jelly.InternationalizedStringExpression.RawHtmlArgument;
 
-import javax.management.modelmbean.DescriptorSupport;
 import javax.servlet.ServletException;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
@@ -91,8 +96,11 @@ import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Type;
 import java.lang.reflect.ParameterizedType;
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -108,8 +116,10 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.Date;
+import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
 import java.util.regex.Pattern;
 import org.apache.commons.lang.StringUtils;
@@ -145,6 +155,10 @@ public class Functions {
         return o instanceof ModelObject;
     }
 
+    public static boolean isModelWithContextMenu(Object o) {
+        return o instanceof ModelObjectWithContextMenu;
+    }
+
     public static String xsDate(Calendar cal) {
         return Util.XS_DATETIME_FORMATTER.format(cal.getTime());
     }
@@ -155,10 +169,23 @@ public class Functions {
     
     public static void initPageVariables(JellyContext context) {
         String rootURL = Stapler.getCurrentRequest().getContextPath();
-        Functions h = new Functions();
 
-        context.setVariable("rootURL", rootURL);
+        Functions h = new Functions();
         context.setVariable("h", h);
+
+
+        // The path starts with a "/" character but does not end with a "/" character.
+        context.setVariable("rootURL", rootURL);
+
+        /*
+            load static resources from the path dedicated to a specific version.
+            This "/static/VERSION/abc/def.ghi" path is interpreted by stapler to be
+            the same thing as "/abc/def.ghi", but this avoids the stale cache
+            problem when the user upgrades to new Jenkins. Stapler also sets a long
+            future expiration dates for such static resources.
+
+            see https://wiki.jenkins-ci.org/display/JENKINS/Hyperlinks+in+HTML
+         */
         context.setVariable("resURL",rootURL+getResourcePath());
         context.setVariable("imagesURL",rootURL+getResourcePath()+"/images");
     }
@@ -752,32 +779,12 @@ public class Functions {
      * Perhaps it is better to introduce another annotation element? But then,
      * extensions shouldn't normally concern themselves about ordering too much, and the only reason
      * we needed this for {@link GlobalConfiguration}s are for backward compatibility.
+     *
+     * @param predicate
+     *      Filter the descriptors based on {@link GlobalConfigurationCategory}
+     * @since 1.494
      */
-    public static Collection<Descriptor> getSortedDescriptorsForGlobalConfig() {
-        class Tag implements Comparable<Tag> {
-            double ordinal;
-            String hierarchy;
-            Descriptor d;
-
-            Tag(double ordinal, Descriptor d) {
-                this.ordinal = ordinal;
-                this.d = d;
-                this.hierarchy = buildSuperclassHierarchy(d.clazz, new StringBuilder()).toString();
-            }
-
-            private StringBuilder buildSuperclassHierarchy(Class c, StringBuilder buf) {
-                Class sc = c.getSuperclass();
-                if (sc!=null)   buildSuperclassHierarchy(sc,buf).append(':');
-                return buf.append(c.getName());
-            }
-
-            public int compareTo(Tag that) {
-                int r = Double.compare(this.ordinal, that.ordinal);
-                if (r!=0)   return -r; // descending for ordinal
-                return this.hierarchy.compareTo(that.hierarchy);
-            }
-        }
-
+    public static Collection<Descriptor> getSortedDescriptorsForGlobalConfig(Predicate<GlobalConfigurationCategory> predicate) {
         ExtensionList<Descriptor> exts = Jenkins.getInstance().getExtensionList(Descriptor.class);
         List<Tag> r = new ArrayList<Tag>(exts.size());
 
@@ -785,7 +792,13 @@ public class Functions {
             Descriptor d = c.getInstance();
             if (d.getGlobalConfigPage()==null)  continue;
 
-            r.add(new Tag(d instanceof GlobalConfiguration ? c.ordinal() : 0, d));
+            if (d instanceof GlobalConfiguration) {
+                if (predicate.apply(((GlobalConfiguration)d).getCategory()))
+                    r.add(new Tag(c.ordinal(), d));
+            } else {
+                if (predicate.apply(GlobalConfigurationCategory.get(Unclassified.class)))
+                    r.add(new Tag(0, d));
+            }
         }
         Collections.sort(r);
 
@@ -795,7 +808,56 @@ public class Functions {
         return DescriptorVisibilityFilter.apply(Jenkins.getInstance(),answer);
     }
 
+    /**
+     * Like {@link #getSortedDescriptorsForGlobalConfig(Predicate)} but with a constant truth predicate, to include all descriptors.
+     */
+    public static Collection<Descriptor> getSortedDescriptorsForGlobalConfig() {
+        return getSortedDescriptorsForGlobalConfig(Predicates.<GlobalConfigurationCategory>alwaysTrue());
+    }
 
+    /**
+     * @deprecated This is rather meaningless.
+     */
+    @Deprecated
+    public static Collection<Descriptor> getSortedDescriptorsForGlobalConfigNoSecurity() {
+        return getSortedDescriptorsForGlobalConfig(Predicates.not(GlobalSecurityConfiguration.FILTER));
+    }
+
+    /**
+     * Like {@link #getSortedDescriptorsForGlobalConfig(Predicate)} but for unclassified descriptors only.
+     * @since 1.506
+     */
+    public static Collection<Descriptor> getSortedDescriptorsForGlobalConfigUnclassified() {
+        return getSortedDescriptorsForGlobalConfig(new Predicate<GlobalConfigurationCategory>() {
+            public boolean apply(GlobalConfigurationCategory cat) {
+                return cat instanceof GlobalConfigurationCategory.Unclassified;
+            }
+        });
+    }
+    
+    private static class Tag implements Comparable<Tag> {
+        double ordinal;
+        String hierarchy;
+        Descriptor d;
+
+        Tag(double ordinal, Descriptor d) {
+            this.ordinal = ordinal;
+            this.d = d;
+            this.hierarchy = buildSuperclassHierarchy(d.clazz, new StringBuilder()).toString();
+        }
+
+        private StringBuilder buildSuperclassHierarchy(Class c, StringBuilder buf) {
+            Class sc = c.getSuperclass();
+            if (sc!=null)   buildSuperclassHierarchy(sc,buf).append(':');
+            return buf.append(c.getName());
+        }
+
+        public int compareTo(Tag that) {
+            int r = Double.compare(this.ordinal, that.ordinal);
+            if (r!=0)   return -r; // descending for ordinal
+            return this.hierarchy.compareTo(that.hierarchy);
+        }
+    }
     /**
      * Computes the path to the icon of the given action
      * from the context path.
@@ -1198,8 +1260,14 @@ public class Functions {
     public static String getActionUrl(String itUrl,Action action) {
         String urlName = action.getUrlName();
         if(urlName==null)   return null;    // to avoid NPE and fail to render the whole page
-        if(SCHEME.matcher(urlName).find())
-            return urlName; // absolute URL
+        try {
+            if (new URI(urlName).isAbsolute()) {
+                return urlName;
+            }
+        } catch (URISyntaxException x) {
+            Logger.getLogger(Functions.class.getName()).log(Level.WARNING, "Failed to parse URL for {0}: {1}", new Object[] {action, x});
+            return null;
+        }
         if(urlName.startsWith("/"))
             return joinPath(Stapler.getCurrentRequest().getContextPath(),urlName);
         else
@@ -1392,8 +1460,6 @@ public class Functions {
         return DescriptorVisibilityFilter.apply(context,descriptors);
     }
     
-    private static final Pattern SCHEME = Pattern.compile("^([a-zA-Z][a-zA-Z0-9+.-]*):");
-
     /**
      * Returns true if we are running unit tests.
      */
@@ -1493,5 +1559,34 @@ public class Functions {
      */
     public String getUserAvatar(User user, String avatarSize) {
         return getAvatar(user,avatarSize);
+    }
+    
+    
+    /**
+     * Returns human readable information about file size
+     * 
+     * @param file size in bytes
+     * @return file size in appropriate unit
+     */
+    public static String humanReadableByteSize(long size){
+        String measure = "B";
+        if(size < 1024){
+            return size + " " + measure;
+        }
+        Double number = new Double(size);
+        if(number>=1024){
+            number = number/1024;
+            measure = "KB";
+            if(number>=1024){
+                number = number/1024;
+                measure = "MB";
+                if(number>=1024){
+                    number=number/1024;
+                    measure = "GB";
+                }
+            }
+        }
+        DecimalFormat format = new DecimalFormat("#0.00");
+        return format.format(number) + " " + measure;
     }
 }

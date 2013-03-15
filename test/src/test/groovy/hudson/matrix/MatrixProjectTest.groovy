@@ -35,6 +35,7 @@ import org.jvnet.hudson.test.Email
 import org.jvnet.hudson.test.HudsonTestCase
 import org.jvnet.hudson.test.SingleFileSCM
 import org.jvnet.hudson.test.UnstableBuilder
+import org.jvnet.hudson.test.recipes.LocalData;
 import com.gargoylesoftware.htmlunit.html.HtmlTable
 import org.jvnet.hudson.test.Bug
 import org.jvnet.hudson.test.TestBuilder
@@ -53,8 +54,14 @@ import hudson.model.FileParameterDefinition
 import hudson.model.Cause.LegacyCodeCause
 import hudson.model.ParametersAction
 import hudson.model.FileParameterValue
-import org.jvnet.hudson.test.MockBuilder
-import org.jvnet.hudson.test.SleepBuilder
+import hudson.model.StringParameterDefinition
+import hudson.model.StringParameterValue
+import hudson.scm.SubversionSCM.SvnInfo;
+import hudson.scm.RevisionParameterAction;
+import java.util.List;
+import java.util.ArrayList;
+import hudson.model.Action;
+
 import java.util.concurrent.CountDownLatch
 
 /**
@@ -209,7 +216,7 @@ public class MatrixProjectTest extends HudsonTestCase {
      * Makes sure that the configuration correctly roundtrips.
      */
     public void testConfigRoundtrip() {
-        hudson.getJDKs().addAll([
+        jenkins.getJDKs().addAll([
                 new JDK("jdk1.7","somewhere"),
                 new JDK("jdk1.6","here"),
                 new JDK("jdk1.5","there")]);
@@ -255,10 +262,10 @@ public class MatrixProjectTest extends HudsonTestCase {
 
         System.out.println(p.labels);
         assertEquals(4,p.labels.size());
-        assertTrue(p.labels.contains(hudson.getLabel("slave0&&slave2")));
-        assertTrue(p.labels.contains(hudson.getLabel("slave1&&slave2")));
-        assertTrue(p.labels.contains(hudson.getLabel("slave0&&slave3")));
-        assertTrue(p.labels.contains(hudson.getLabel("slave1&&slave3")));
+        assertTrue(p.labels.contains(jenkins.getLabel("slave0&&slave2")));
+        assertTrue(p.labels.contains(jenkins.getLabel("slave1&&slave2")));
+        assertTrue(p.labels.contains(jenkins.getLabel("slave0&&slave3")));
+        assertTrue(p.labels.contains(jenkins.getLabel("slave1&&slave3")));
     }
 
     /**
@@ -283,7 +290,7 @@ public class MatrixProjectTest extends HudsonTestCase {
         // have foo=1 block to make sure the 2nd configuration is in the queue
         firstStarted.block();
         // enter into the quiet down while foo=2 is still in the queue
-        hudson.doQuietDown();
+        jenkins.doQuietDown();
         buildCanProceed.signal();
 
         // make sure foo=2 still completes. use time out to avoid hang
@@ -367,4 +374,77 @@ public class MatrixProjectTest extends HudsonTestCase {
 
         assertEquals 4, dirs.size()
     }
+
+
+    /**
+     * Test that Actions are passed to configurations
+     */
+    public void testParameterActions() throws Exception {
+        MatrixProject p = createMatrixProject();
+
+        ParametersDefinitionProperty pdp = new ParametersDefinitionProperty(
+            new StringParameterDefinition("PARAM_A","default_a"),
+            new StringParameterDefinition("PARAM_B","default_b"),
+        );
+
+        p.addProperty(pdp);
+        ParametersAction pa = new ParametersAction( pdp.getParameterDefinitions().collect { return it.getDefaultParameterValue() } )
+
+        MatrixBuild build = p.scheduleBuild2(0,new LegacyCodeCause(), pa).get();
+
+        assertEquals(4, build.getRuns().size());
+
+        for(MatrixRun run : build.getRuns()) {
+            ParametersAction pa1 = run.getAction(ParametersAction.class);
+            assertNotNull(pa1);
+            ["PARAM_A","PARAM_B"].each{ assertNotNull(pa1.getParameter(it)) }
+        }
+    }
+
+    /**
+     * Test that other Actions are passed to configurations
+     * requires supported version of subversion plugin 1.43+
+     */
+
+    //~ public void testMatrixChildActions() throws Exception {
+        //~ MatrixProject p = createMatrixProject();
+
+        //~ ParametersDefinitionProperty pdp = new ParametersDefinitionProperty(
+            //~ new StringParameterDefinition("PARAM_A","default_a"),
+            //~ new StringParameterDefinition("PARAM_B","default_b"),
+        //~ );
+
+        //~ p.addProperty(pdp);
+
+        //~ List<Action> actions = new ArrayList<Action>();
+        //~ actions.add(new RevisionParameterAction(new SvnInfo("http://example.com/svn/repo/",1234)));
+        //~ actions.add(new ParametersAction( pdp.getParameterDefinitions().collect { return it.getDefaultParameterValue() } ));
+
+        //~ MatrixBuild build = p.scheduleBuild2(0,new LegacyCodeCause(), actions).get();
+
+        //~ assertEquals(4, build.getRuns().size());
+
+        //~ for(MatrixRun run : build.getRuns()) {
+            //~ ParametersAction pa1 = run.getAction(ParametersAction.class);
+            //~ assertNotNull(pa1);
+            //~ ["PARAM_A","PARAM_B"].each{ assertNotNull(pa1.getParameter(it)) };
+
+            //~ assertNotNull(run.getAction(RevisionParameterAction.class));
+        //~ }
+    //~ }
+
+    @Bug(15271)
+    @LocalData
+    public void testUpgrade() throws Exception {
+        MatrixProject p = jenkins.getItemByFullName("x", MatrixProject.class);
+        assertNotNull(p);
+        MatrixExecutionStrategy executionStrategy = p.getExecutionStrategy();
+        assertEquals(DefaultMatrixExecutionStrategyImpl.class, executionStrategy.getClass());
+        DefaultMatrixExecutionStrategyImpl defaultExecutionStrategy = (DefaultMatrixExecutionStrategyImpl) executionStrategy;
+        assertFalse(defaultExecutionStrategy.isRunSequentially());
+        assertNull(defaultExecutionStrategy.getTouchStoneCombinationFilter());
+        assertNull(defaultExecutionStrategy.getTouchStoneResultCondition());
+        assertNull(defaultExecutionStrategy.getSorter());
+    }
+
 }

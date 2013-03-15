@@ -24,9 +24,9 @@
  */
 package hudson.model;
 
+import jenkins.model.DependencyDeclarer;
 import com.google.common.collect.ImmutableList;
 import hudson.security.ACL;
-import hudson.security.NotSerilizableSecurityContext;
 import jenkins.model.Jenkins;
 import org.acegisecurity.context.SecurityContext;
 import org.acegisecurity.context.SecurityContextHolder;
@@ -83,7 +83,6 @@ public class DependencyGraph implements Comparator<AbstractProject> {
     
     public void build() {
         // Set full privileges while computing to avoid missing any projects the current user cannot see.
-        // Use setContext (NOT getContext().setAuthentication()) so we don't affect concurrent threads for same HttpSession.
         SecurityContext saveCtx = ACL.impersonate(ACL.SYSTEM);
         try {
             this.computationalData = new HashMap<Class<?>, Object>();
@@ -222,12 +221,12 @@ public class DependencyGraph implements Comparator<AbstractProject> {
     }
 
     /**
-     * Lists up {@link DependecyDeclarer} from the collection and let them builds dependencies.
+     * Lists up {@link DependencyDeclarer} from the collection and let them builds dependencies.
      */
     public void addDependencyDeclarers(AbstractProject upstream, Collection<?> possibleDependecyDeclarers) {
         for (Object o : possibleDependecyDeclarers) {
-            if (o instanceof DependecyDeclarer) {
-                DependecyDeclarer dd = (DependecyDeclarer) o;
+            if (o instanceof DependencyDeclarer) {
+                DependencyDeclarer dd = (DependencyDeclarer) o;
                 dd.buildDependencyGraph(upstream,this);
             }
         }

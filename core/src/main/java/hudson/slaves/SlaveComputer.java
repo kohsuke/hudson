@@ -24,6 +24,7 @@
 package hudson.slaves;
 
 import hudson.model.*;
+import hudson.util.IOException2;
 import hudson.util.IOUtils;
 import hudson.util.io.ReopenableRotatingFileOutputStream;
 import jenkins.model.Jenkins.MasterComputer;
@@ -35,18 +36,19 @@ import hudson.util.NullStream;
 import hudson.util.RingBufferLogHandler;
 import hudson.util.Futures;
 import hudson.FilePath;
-import hudson.lifecycle.WindowsSlaveInstaller;
 import hudson.Util;
 import hudson.AbortException;
 import hudson.remoting.Launcher;
 import static hudson.slaves.SlaveComputer.LogHolder.SLAVE_LOG_HANDLER;
 import hudson.slaves.OfflineCause.ChannelTermination;
+import hudson.util.Secret;
 
 import java.io.File;
 import java.io.OutputStream;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.security.SecureRandom;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
@@ -59,7 +61,16 @@ import java.util.concurrent.Future;
 import java.security.Security;
 
 import hudson.util.io.ReopenableFileOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintWriter;
+import java.security.GeneralSecurityException;
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import javax.servlet.RequestDispatcher;
 import jenkins.model.Jenkins;
+import jenkins.slaves.JnlpSlaveAgentProtocol;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.QueryParameter;
@@ -67,7 +78,11 @@ import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.HttpRedirect;
 
 import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletResponse;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletResponseWrapper;
+import org.kohsuke.stapler.ResponseImpl;
+import org.kohsuke.stapler.WebMethod;
+import org.kohsuke.stapler.compression.FilterServletOutputStream;
 
 /**
  * {@link Computer} for {@link Slave}s.
@@ -127,6 +142,13 @@ public class SlaveComputer extends Computer {
     @Override
     public boolean isAcceptingTasks() {
         return acceptingTasks;
+    }
+
+    /**
+     * @since 1.498
+     */
+    public String getJnlpMac() {
+        return JnlpSlaveAgentProtocol.SLAVE_SECRET.mac(getName());
     }
 
     /**
@@ -318,6 +340,60 @@ public class SlaveComputer extends Computer {
     }
 
     /**
+     * Shows {@link Channel#classLoadingCount}.
+     * @since 1.495
+     */
+    public int getClassLoadingCount() throws IOException, InterruptedException {
+        return channel.call(new LoadingCount(false));
+    }
+
+    /**
+     * Shows {@link Channel#resourceLoadingCount}.
+     * @since 1.495
+     */
+    public int getResourceLoadingCount() throws IOException, InterruptedException {
+        return channel.call(new LoadingCount(true));
+    }
+
+    /**
+     * Shows {@link Channel#classLoadingTime}.
+     * @since 1.495
+     */
+    public long getClassLoadingTime() throws IOException, InterruptedException {
+        return channel.call(new LoadingTime(false));
+    }
+
+    /**
+     * Shows {@link Channel#resourceLoadingTime}.
+     * @since 1.495
+     */
+    public long getResourceLoadingTime() throws IOException, InterruptedException {
+        return channel.call(new LoadingTime(true));
+    }
+
+    static class LoadingCount implements Callable<Integer,RuntimeException> {
+        private final boolean resource;
+        LoadingCount(boolean resource) {
+            this.resource = resource;
+        }
+        @Override public Integer call() {
+            Channel c = Channel.current();
+            return resource ? c.resourceLoadingCount.get() : c.classLoadingCount.get();
+        }
+    }
+
+    static class LoadingTime implements Callable<Long,RuntimeException> {
+        private final boolean resource;
+        LoadingTime(boolean resource) {
+            this.resource = resource;
+        }
+        @Override public Long call() {
+            Channel c = Channel.current();
+            return resource ? c.resourceLoadingTime.get() : c.classLoadingTime.get();
+        }
+    }
+
+    /**
      * Sets up the connection through an exsting channel.
      *
      * @since 1.444
@@ -365,7 +441,6 @@ public class SlaveComputer extends Computer {
         channel.pinClassLoader(getClass().getClassLoader());
 
         channel.call(new SlaveInitializer());
-        channel.call(new WindowsSlaveInstaller(remoteFs));
         for (ComputerListener cl : ComputerListener.all())
             cl.preOnline(this,channel,root,taskListener);
 
@@ -447,7 +522,7 @@ public class SlaveComputer extends Computer {
 
     public void doLaunchSlaveAgent(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
         if(channel!=null) {
-            rsp.sendError(HttpServletResponse.SC_NOT_FOUND);
+            req.getView(this,"already-launched.jelly").forward(req, rsp);
             return;
         }
 
@@ -476,6 +551,43 @@ public class SlaveComputer extends Computer {
      */
     public Slave.JnlpJar getJnlpJars(String fileName) {
         return new Slave.JnlpJar(fileName);
+    }
+
+    @WebMethod(name="slave-agent.jnlp")
+    public void doSlaveAgentJnlp(StaplerRequest req, StaplerResponse res) throws IOException, ServletException {
+        RequestDispatcher view = req.getView(this, "slave-agent.jnlp.jelly");
+        if ("true".equals(req.getParameter("encrypt"))) {
+            final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            StaplerResponse temp = new ResponseImpl(req.getStapler(), new HttpServletResponseWrapper(res) {
+                @Override public ServletOutputStream getOutputStream() throws IOException {
+                    return new FilterServletOutputStream(baos);
+                }
+                @Override public PrintWriter getWriter() throws IOException {
+                    throw new IllegalStateException();
+                }
+            });
+            view.forward(req, temp);
+
+            byte[] iv = new byte[128/8];
+            new SecureRandom().nextBytes(iv);
+
+            byte[] jnlpMac = JnlpSlaveAgentProtocol.SLAVE_SECRET.mac(getName().getBytes("UTF-8"));
+            SecretKey key = new SecretKeySpec(jnlpMac, 0, /* export restrictions */ 128 / 8, "AES");
+            byte[] encrypted;
+            try {
+                Cipher c = Secret.getCipher("AES/CFB8/NoPadding");
+                c.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
+                encrypted = c.doFinal(baos.toByteArray());
+            } catch (GeneralSecurityException x) {
+                throw new IOException2(x);
+            }
+            res.setContentType("application/octet-stream");
+            res.getOutputStream().write(iv);
+            res.getOutputStream().write(encrypted);
+        } else {
+            checkPermission(CONNECT);
+            view.forward(req, res);
+        }
     }
 
     @Override

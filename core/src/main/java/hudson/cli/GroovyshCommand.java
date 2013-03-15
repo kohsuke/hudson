@@ -58,7 +58,7 @@ public class GroovyshCommand extends CLICommand {
     @Override
     public int main(List<String> args, Locale locale, InputStream stdin, PrintStream stdout, PrintStream stderr) {
         // this allows the caller to manipulate the JVM state, so require the admin privilege.
-        Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
+        Jenkins.getInstance().checkPermission(Jenkins.RUN_SCRIPTS);
         // TODO: ^as this class overrides main() (which has authentication stuff),
         // how to get ADMIN permission for this command?
 
@@ -82,7 +82,7 @@ public class GroovyshCommand extends CLICommand {
 
         IO io = new IO(new BufferedInputStream(stdin),stdout,stderr);
 
-        final ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        final ClassLoader cl = Jenkins.getInstance().pluginManager.uberClassLoader;
         Closure registrar = new Closure(null, null) {
             private static final long serialVersionUID = 1L;
 

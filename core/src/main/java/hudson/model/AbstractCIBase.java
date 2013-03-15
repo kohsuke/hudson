@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
 
 import jenkins.model.Configuration;
 
@@ -77,7 +78,7 @@ public abstract class AbstractCIBase extends Node implements ItemGroup<TopLevelI
         v.owner = this;
     }
     protected void interruptReloadThread() {
-        ExternalJob.reloadThread.interrupt();
+        ViewJob.reloadThread.interrupt();
     }
 
     protected void killComputer(Computer c) {
@@ -143,7 +144,7 @@ public abstract class AbstractCIBase extends Node implements ItemGroup<TopLevelI
         throw new IllegalStateException("Trying to remove unknown computer");
     }
 
-    /*package*/ Computer getComputer(Node n) {
+    /*package*/ @CheckForNull Computer getComputer(Node n) {
         Map<Node,Computer> computers = getComputerMap();
         return computers.get(n);
     }

@@ -35,7 +35,7 @@ import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
 import hudson.model.BuildListener;
-import hudson.model.DependecyDeclarer;
+import jenkins.model.DependencyDeclarer;
 import hudson.model.DependencyGraph;
 import hudson.model.DependencyGraph.Dependency;
 import hudson.model.Fingerprint;
@@ -70,6 +70,7 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.logging.Level;
@@ -80,7 +81,7 @@ import java.util.logging.Logger;
  *
  * @author Kohsuke Kawaguchi
  */
-public class Fingerprinter extends Recorder implements Serializable, DependecyDeclarer {
+public class Fingerprinter extends Recorder implements Serializable, DependencyDeclarer {
     public static boolean enableFingerprintsInDependencyGraph = Boolean.parseBoolean(System.getProperty(Fingerprinter.class.getName() + ".enableFingerprintsInDependencyGraph", "false"));
     
     /**
@@ -295,6 +296,8 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
         
         private final AbstractBuild build;
 
+        private static final Random rand = new Random();
+
         /**
          * From file name to the digest.
          */
@@ -340,11 +343,15 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
         }
 
         public void onLoad() {
-            Run pb = build.getPreviousBuild();
-            if (pb!=null) {
-                FingerprintAction a = pb.getAction(FingerprintAction.class);
-                if (a!=null)
-                    compact(a);
+            // share data structure with nearby builds, but to keep lazy loading efficient,
+            // don't go back the history forever.
+            if (rand.nextInt(2)!=0) {
+                Run pb = build.getPreviousBuild();
+                if (pb!=null) {
+                    FingerprintAction a = pb.getAction(FingerprintAction.class);
+                    if (a!=null)
+                        compact(a);
+                }
             }
         }
 
@@ -431,7 +438,7 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
                 if (job==null)  continue;   // project no longer exists
                 if (job.getParent()==build.getParent())
                     continue;   // we are the parent of the build owner, that is almost like we are the owner 
-                if(job.getBuildByNumber(bp.getNumber())==null && !includeMissing)
+                if(!includeMissing && job.getBuildByNumber(bp.getNumber())==null)
                     continue;               // build no longer exists
 
                 Integer existing = r.get(job);

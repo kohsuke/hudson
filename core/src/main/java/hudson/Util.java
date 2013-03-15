@@ -26,12 +26,15 @@ package hudson;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.NativeLong;
+import edu.umd.cs.findbugs.annotations.SuppressWarnings;
 import hudson.Proc.LocalProc;
 import hudson.model.TaskListener;
 import hudson.os.PosixAPI;
 import hudson.util.IOException2;
 import hudson.util.QuotedStringTokenizer;
 import hudson.util.VariableResolver;
+import hudson.util.jna.Kernel32;
+import hudson.util.jna.WinIOException;
 import jenkins.model.Jenkins;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.time.FastDateFormat;
@@ -48,6 +51,8 @@ import org.kohsuke.stapler.Stapler;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
+import java.lang.reflect.Array;
+import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -63,10 +68,13 @@ import java.security.NoSuchAlgorithmException;
 import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import hudson.util.jna.Kernel32Utils;
 
 import static hudson.util.jna.GNUCLibrary.LIBC;
 
@@ -308,6 +316,19 @@ public class Util {
      */
     //Taken from http://svn.apache.org/viewvc/maven/shared/trunk/file-management/src/main/java/org/apache/maven/shared/model/fileset/util/FileSetManager.java?view=markup
     public static boolean isSymlink(File file) throws IOException {
+        Boolean r = isSymlinkJava7(file);
+        if (r != null) {
+            return r;
+        }
+        if (Functions.isWindows()) {
+            try {
+                return Kernel32Utils.isJunctionOrSymlink(file);
+            } catch (UnsupportedOperationException e) {
+                // fall through
+            } catch (LinkageError e) {
+                // fall through
+            }
+        }
         String name = file.getName();
         if (name.equals(".") || name.equals(".."))
             return false;
@@ -320,6 +341,18 @@ public class Util {
             fileInCanonicalParent = new File( parentDir.getCanonicalPath(), name );
         }
         return !fileInCanonicalParent.getCanonicalFile().equals( fileInCanonicalParent.getAbsoluteFile() );
+    }
+
+    @SuppressWarnings("NP_BOOLEAN_RETURN_NULL")
+    private static Boolean isSymlinkJava7(File file) throws IOException {
+        try {
+            Object path = File.class.getMethod("toPath").invoke(file);
+            return (Boolean) Class.forName("java.nio.file.Files").getMethod("isSymbolicLink", Class.forName("java.nio.file.Path")).invoke(null, path);
+        } catch (NoSuchMethodException x) {
+            return null; // fine, Java 5/6
+        } catch (Exception x) {
+            throw (IOException) new IOException(x.toString()).initCause(x);
+        }
     }
 
     /**
@@ -480,6 +513,25 @@ public class Util {
     public static String removeTrailingSlash(String s) {
         if(s.endsWith("/")) return s.substring(0,s.length()-1);
         else                return s;
+    }
+
+
+    /**
+     * Ensure string ends with suffix
+     *
+     * @param subject Examined string
+     * @param suffix  Desired suffix
+     * @return Original subject in case it already ends with suffix, null in
+     *         case subject was null and subject + suffix otherwise.
+     * @since 1.505
+     */
+    public static String ensureEndsWith(String subject, String suffix) {
+
+        if (subject == null) return null;
+
+        if (subject.endsWith(suffix)) return subject;
+
+        return subject + suffix;
     }
 
     /**
@@ -966,59 +1018,117 @@ public class Util {
     }
 
     /**
-     * Creates a symlink to baseDir+targetPath at baseDir+symlinkPath.
+     * Creates a symlink to targetPath at baseDir+symlinkPath.
      * <p>
      * If there's a prior symlink at baseDir+symlinkPath, it will be overwritten.
      *
      * @param baseDir
      *      Base directory to resolve the 'symlinkPath' parameter.
      * @param targetPath
-     *      The file that the symlink should point to.
+     *      The file that the symlink should point to. Usually relative to the directory of the symlink but may instead be an absolute path.
      * @param symlinkPath
-     *      Where to create a symlink in.
+     *      Where to create a symlink in (relative to {@code baseDir})
      */
     public static void createSymlink(File baseDir, String targetPath, String symlinkPath, TaskListener listener) throws InterruptedException {
-        if(Functions.isWindows() || NO_SYMLINK)   return;
-
         try {
-            String errmsg = "";
-            // if a file or a directory exists here, delete it first.
-            // try simple delete first (whether exists() or not, as it may be symlink pointing
-            // to non-existent target), but fallback to "rm -rf" to delete non-empty dir.
-            File symlinkFile = new File(baseDir, symlinkPath);
-            if (!symlinkFile.delete() && symlinkFile.exists())
-                // ignore a failure.
-                new LocalProc(new String[]{"rm","-rf", symlinkPath},new String[0],listener.getLogger(), baseDir).join();
+            if (createSymlinkJava7(baseDir, targetPath, symlinkPath)) {
+                return;
+            }
+            if (NO_SYMLINK) {
+                return;
+            }
 
-            Integer r=null;
-            if (!SYMLINK_ESCAPEHATCH) {
+            File symlinkFile = new File(baseDir, symlinkPath);
+            if (Functions.isWindows()) {
+                if (symlinkFile.exists()) {
+                    symlinkFile.delete();
+                }
+                File dst = new File(symlinkFile,"..\\"+targetPath);
                 try {
-                    r = LIBC.symlink(targetPath,symlinkFile.getAbsolutePath());
-                    if (r!=0) {
-                        r = Native.getLastError();
-                        errmsg = LIBC.strerror(r);
+                    Kernel32Utils.createSymbolicLink(symlinkFile,targetPath,dst.isDirectory());
+                } catch (WinIOException e) {
+                    if (e.getErrorCode()==1314) {/* ERROR_PRIVILEGE_NOT_HELD */
+                        warnWindowsSymlink();
+                        return;
                     }
-                } catch (LinkageError e) {
-                    // if JNA is unavailable, fall back.
-                    // we still prefer to try JNA first as PosixAPI supports even smaller platforms.
-                    if (PosixAPI.supportsNative()) {
-                        r = PosixAPI.get().symlink(targetPath,symlinkFile.getAbsolutePath());
+                    throw e;
+                }
+            } else {
+                String errmsg = "";
+                // if a file or a directory exists here, delete it first.
+                // try simple delete first (whether exists() or not, as it may be symlink pointing
+                // to non-existent target), but fallback to "rm -rf" to delete non-empty dir.
+                if (!symlinkFile.delete() && symlinkFile.exists())
+                    // ignore a failure.
+                    new LocalProc(new String[]{"rm","-rf", symlinkPath},new String[0],listener.getLogger(), baseDir).join();
+
+                Integer r=null;
+                if (!SYMLINK_ESCAPEHATCH) {
+                    try {
+                        r = LIBC.symlink(targetPath,symlinkFile.getAbsolutePath());
+                        if (r!=0) {
+                            r = Native.getLastError();
+                            errmsg = LIBC.strerror(r);
+                        }
+                    } catch (LinkageError e) {
+                        // if JNA is unavailable, fall back.
+                        // we still prefer to try JNA first as PosixAPI supports even smaller platforms.
+                        if (PosixAPI.supportsNative()) {
+                            r = PosixAPI.get().symlink(targetPath,symlinkFile.getAbsolutePath());
+                        }
                     }
                 }
+                if (r==null) {
+                    // if all else fail, fall back to the most expensive approach of forking a process
+                    r = new LocalProc(new String[]{
+                        "ln","-s", targetPath, symlinkPath},
+                        new String[0],listener.getLogger(), baseDir).join();
+                }
+                if (r!=0)
+                    listener.getLogger().println(String.format("ln -s %s %s failed: %d %s",targetPath, symlinkFile, r, errmsg));
             }
-            if (r==null) {
-                // if all else fail, fall back to the most expensive approach of forking a process
-                r = new LocalProc(new String[]{
-                    "ln","-s", targetPath, symlinkPath},
-                    new String[0],listener.getLogger(), baseDir).join();
-            }
-            if (r!=0)
-                listener.getLogger().println(String.format("ln -s %s %s failed: %d %s",targetPath, symlinkFile, r, errmsg));
         } catch (IOException e) {
             PrintStream log = listener.getLogger();
             log.printf("ln %s %s failed%n",targetPath, new File(baseDir, symlinkPath));
             Util.displayIOException(e,listener);
             e.printStackTrace( log );
+        }
+    }
+
+    private static boolean createSymlinkJava7(File baseDir, String targetPath, String symlinkPath) throws IOException {
+        try {
+            Object path = File.class.getMethod("toPath").invoke(new File(baseDir, symlinkPath));
+            Object target = Class.forName("java.nio.file.Paths").getMethod("get", String.class, String[].class).invoke(null, targetPath, new String[0]);
+            Class<?> filesC = Class.forName("java.nio.file.Files");
+            Class<?> pathC = Class.forName("java.nio.file.Path");
+            filesC.getMethod("deleteIfExists", pathC).invoke(null, path);
+            Object noAttrs = Array.newInstance(Class.forName("java.nio.file.attribute.FileAttribute"), 0);
+            filesC.getMethod("createSymbolicLink", pathC, pathC, noAttrs.getClass()).invoke(null, path, target, noAttrs);
+            return true;
+        } catch (NoSuchMethodException x) {
+            return false; // fine, Java 5/6
+        } catch (InvocationTargetException x) {
+            Throwable x2 = x.getCause();
+            if (x2 instanceof UnsupportedOperationException) {
+                return true; // no symlinks on this platform
+            }
+            if (Functions.isWindows() && String.valueOf(x2).contains("java.nio.file.FileSystemException")) {
+                warnWindowsSymlink();
+                return true;
+            }
+            if (x2 instanceof IOException) {
+                throw (IOException) x2;
+            }
+            throw (IOException) new IOException(x.toString()).initCause(x);
+        } catch (Exception x) {
+            throw (IOException) new IOException(x.toString()).initCause(x);
+        }
+    }
+
+    private static final AtomicBoolean warnedSymlinks = new AtomicBoolean();
+    private static void warnWindowsSymlink() {
+        if (warnedSymlinks.compareAndSet(false, true)) {
+            LOGGER.warning("Symbolic links enabled on this platform but disabled for this user; run as administrator or use Local Security Policy > Security Settings > Local Policies > User Rights Assignment > Create symbolic links");
         }
     }
 
@@ -1031,14 +1141,57 @@ public class Util {
     }
 
     /**
+     * Resolves a symlink to the {@link File} that points to.
+     *
+     * @return null
+     *      if the specified file is not a symlink.
+     */
+    public static File resolveSymlinkToFile(File link) throws InterruptedException, IOException {
+        String target = resolveSymlink(link);
+        if (target==null)   return null;
+
+        File f = new File(target);
+        if (f.isAbsolute()) return f;   // absolute symlink
+        return new File(link.getParentFile(),target);   // relative symlink
+    }
+
+    /**
      * Resolves symlink, if the given file is a symlink. Otherwise return null.
      * <p>
      * If the resolution fails, report an error.
      *
-     * @param listener
-     *      If we rely on an external command to resolve symlink, this is it.
+     * @return
+     *      null if the given file is not a symlink.
+     *      If the symlink is absolute, the returned string is an absolute path.
+     *      If the symlink is relative, the returned string is that relative representation.
+     *      The relative path is meant to be resolved from the location of the symlink.
      */
     public static String resolveSymlink(File link) throws InterruptedException, IOException {
+        try { // Java 7
+            Object path = File.class.getMethod("toPath").invoke(link);
+            return Class.forName("java.nio.file.Files").getMethod("readSymbolicLink", Class.forName("java.nio.file.Path")).invoke(null, path).toString();
+        } catch (NoSuchMethodException x) {
+            // fine, Java 5/6; fall through
+        } catch (InvocationTargetException x) {
+            Throwable x2 = x.getCause();
+            if (x2 instanceof UnsupportedOperationException) {
+                return null; // no symlinks on this platform
+            }
+            try {
+                if (Class.forName("java.nio.file.NotLinkException").isInstance(x2)) {
+                    return null;
+                }
+            } catch (ClassNotFoundException x3) {
+                assert false : x3; // should be Java 7+ here
+            }
+            if (x2 instanceof IOException) {
+                throw (IOException) x2;
+            }
+            throw (IOException) new IOException(x.toString()).initCause(x);
+        } catch (Exception x) {
+            throw (IOException) new IOException(x.toString()).initCause(x);
+        }
+
         if(Functions.isWindows())     return null;
 
         String filename = link.getAbsolutePath();
@@ -1125,7 +1278,6 @@ public class Util {
      * are overridden in the given derived type.
      */
     public static boolean isOverridden(Class base, Class derived, String methodName, Class... types) {
-        // the rewriteHudsonWar method isn't overridden.
         try {
             return !base.getMethod(methodName, types).equals(
                     derived.getMethod(methodName,types));
@@ -1152,6 +1304,31 @@ public class Util {
      */
     public static String intern(String s) {
         return s==null ? s : s.intern();
+    }
+
+    /**
+     * Return true if the systemId denotes an absolute URI .
+     *
+     * The same algorithm can be seen in {@link URI}, but
+     * implementing this by ourselves allow it to be more lenient about
+     * escaping of URI.
+     */
+    public static boolean isAbsoluteUri(String uri) {
+        int idx = uri.indexOf(':');
+        if (idx<0)  return false;   // no ':'. can't be absolute
+
+        // #, ?, and / must not be before ':'
+        return idx<_indexOf(uri, '#') && idx<_indexOf(uri,'?') && idx<_indexOf(uri,'/');
+    }
+
+    /**
+     * Works like {@link String#indexOf(int)} but 'not found' is returned as s.length(), not -1.
+     * This enables more straight-forward comparison.
+     */
+    private static int _indexOf(String s, char ch) {
+        int idx = s.indexOf(ch);
+        if (idx<0)  return s.length();
+        return idx;
     }
 
     /**

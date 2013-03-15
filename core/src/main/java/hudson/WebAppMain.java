@@ -27,9 +27,6 @@ import com.thoughtworks.xstream.converters.reflection.PureJavaReflectionProvider
 import com.thoughtworks.xstream.core.JVM;
 import hudson.model.Hudson;
 import jenkins.model.Jenkins;
-import hudson.model.User;
-import hudson.triggers.SafeTimerTask;
-import hudson.triggers.Trigger;
 import hudson.util.HudsonIsLoading;
 import hudson.util.IncompatibleServletVersionDetected;
 import hudson.util.IncompatibleVMDetected;
@@ -254,8 +251,7 @@ public final class WebAppMain implements ServletContextListener {
     @edu.umd.cs.findbugs.annotations.SuppressWarnings("LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE")
     private void installLogger() {
         Jenkins.logRecords = handler.getView();
-        Logger.getLogger("hudson").addHandler(handler);
-        Logger.getLogger("jenkins").addHandler(handler);
+        Logger.getLogger("").addHandler(handler);
     }
 
     /** Add some metadata to a File, allowing to trace setup issues */

@@ -613,6 +613,12 @@ LABEL.attach-previous {
   text-align: left;
 }
 
+/* ============================ list view entries ======================== */
+div.listview-jobs {
+  max-height:300px;
+  overflow:auto;
+}
+
 /* ============================ parameters form ========================== */
 
 table.parameters {
@@ -861,6 +867,17 @@ DIV.yahooTree td {
   border: none !important;
   background-color: #FFF !important;
 }
+
+.yuimenu LI .yui-menu-tooltip {
+  color: #A6A6A6;
+}
+
+.yuimenu LI.yui-menuitem-tooltip {
+  border-bottom: 1px solid #808080;
+  padding-bottom: 3px;
+  margin-bottom: 1em;
+}
+
 /* ========================= search box at the top-right of the page ========================= */
 #search-box {
   background: white url(../images/16x16/search.gif) no-repeat 2px center;
@@ -946,6 +963,18 @@ TEXTAREA.rich-editor {
     background-repeat: repeat-y;
     padding-left: 20px;
 }
+
+.hetero-list-container.with-drag-drop .repeated-chunk.hover {
+    border: 2px dashed #CCC;
+}
+
+.hetero-list-container.with-drag-drop .repeated-chunk {
+    border: 2px dashed transparent;
+    padding: 0.5em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+}
+
 
 /* ========================= plugin update center ========================= */
 

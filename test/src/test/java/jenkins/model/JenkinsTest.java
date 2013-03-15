@@ -23,12 +23,24 @@
  */
 package jenkins.model;
 
+import com.gargoylesoftware.htmlunit.html.HtmlForm;
+import hudson.maven.MavenModuleSet;
+import hudson.maven.MavenModuleSetBuild;
+import hudson.model.RootAction;
+import hudson.model.UnprotectedRootAction;
+import hudson.security.FullControlOnceLoggedInAuthorizationStrategy;
+import hudson.util.HttpResponses;
 import junit.framework.Assert;
 import hudson.model.FreeStyleProject;
 import hudson.util.FormValidation;
 
 import org.junit.Test;
+import org.jvnet.hudson.test.Bug;
+import org.jvnet.hudson.test.ExtractResourceSCM;
 import org.jvnet.hudson.test.HudsonTestCase;
+import org.jvnet.hudson.test.TestExtension;
+import org.kohsuke.stapler.HttpResponse;
+import java.net.HttpURLConnection;
 
 /**
  * @author kingfai
@@ -160,5 +172,82 @@ public class JenkinsTest extends HudsonTestCase {
         Jenkins jenkins = Jenkins.getInstance();
         FormValidation v = jenkins.doCheckDisplayName(jobName, curJobName);
         Assert.assertEquals(FormValidation.Kind.WARNING, v.kind);                
+    }
+
+    @Bug(12251)
+    public void testItemFullNameExpansion() throws Exception {
+        HtmlForm f = createWebClient().goTo("/configure").getFormByName("config");
+        f.getInputByName("_.rawBuildsDir").setValueAttribute("${JENKINS_HOME}/test12251_builds/${ITEM_FULL_NAME}");
+        f.getInputByName("_.rawWorkspaceDir").setValueAttribute("${JENKINS_HOME}/test12251_ws/${ITEM_FULL_NAME}");
+        submit(f);
+
+        // build a dummy project
+        MavenModuleSet m = createMavenProject();
+        m.setScm(new ExtractResourceSCM(getClass().getResource("/simple-projects.zip")));
+        MavenModuleSetBuild b = m.scheduleBuild2(0).get();
+
+        // make sure these changes are effective
+        assertTrue(b.getWorkspace().getRemote().contains("test12251_ws"));
+        assertTrue(b.getRootDir().toString().contains("test12251_builds"));
+    }
+
+    /**
+     * Makes sure access to "/foobar" for UnprotectedRootAction gets through.
+     */
+    @Bug(14113)
+    public void testUnprotectedRootAction() throws Exception {
+        jenkins.setSecurityRealm(createDummySecurityRealm());
+        jenkins.setAuthorizationStrategy(new FullControlOnceLoggedInAuthorizationStrategy());
+        WebClient wc = createWebClient();
+        wc.goTo("/foobar");
+        wc.goTo("/foobar/");
+        wc.goTo("/foobar/zot");
+
+        // and make sure this fails
+        wc.assertFails("/foobar-zot/", HttpURLConnection.HTTP_INTERNAL_ERROR);
+
+        assertEquals(3,jenkins.getExtensionList(RootAction.class).get(RootActionImpl.class).count);
+    }
+
+    @TestExtension("testUnprotectedRootAction")
+    public static class RootActionImpl implements UnprotectedRootAction {
+        private int count;
+
+        public String getIconFileName() {
+            return null;
+        }
+
+        public String getDisplayName() {
+            return null;
+        }
+
+        public String getUrlName() {
+            return "foobar";
+        }
+
+        public HttpResponse doDynamic() {
+            assertTrue(Jenkins.getInstance().getAuthentication().getName().equals("anonymous"));
+            count++;
+            return HttpResponses.html("OK");
+        }
+    }
+
+    @TestExtension("testUnprotectedRootAction")
+    public static class ProtectedRootActionImpl implements RootAction {
+        public String getIconFileName() {
+            return null;
+        }
+
+        public String getDisplayName() {
+            return null;
+        }
+
+        public String getUrlName() {
+            return "foobar-zot";
+        }
+
+        public HttpResponse doDynamic() {
+            throw new AssertionError();
+        }
     }
 }

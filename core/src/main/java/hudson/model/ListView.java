@@ -30,12 +30,15 @@ import hudson.model.Descriptor.FormException;
 import hudson.util.CaseInsensitiveComparator;
 import hudson.util.DescribableList;
 import hudson.util.FormValidation;
+import hudson.util.HttpResponses;
 import hudson.views.ListViewColumn;
 import hudson.views.ViewJobFilter;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.servlet.ServletException;
@@ -151,11 +154,11 @@ public class ListView extends View implements Saveable {
 
         Boolean statusFilter = this.statusFilter; // capture the value to isolate us from concurrent update
         List<TopLevelItem> items = new ArrayList<TopLevelItem>(names.size());
-        for (String n : names) {
-            TopLevelItem item = getOwnerItemGroup().getItem(n);
+        for (TopLevelItem item : getOwnerItemGroup().getItems()) {
+            if (!names.contains(item.getName())) continue;
             // Add if no status filter or filter matches enabled/disabled status:
-            if(item!=null && (statusFilter == null || !(item instanceof AbstractProject)
-                              || ((AbstractProject)item).isDisabled() ^ statusFilter))
+            if(statusFilter == null || !(item instanceof AbstractProject)
+                              || ((AbstractProject)item).isDisabled() ^ statusFilter)
                 items.add(item);
         }
 
@@ -199,17 +202,46 @@ public class ListView extends View implements Saveable {
         return statusFilter;
     }
 
-    public synchronized Item doCreateItem(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+    public Item doCreateItem(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
         ItemGroup<? extends TopLevelItem> ig = getOwnerItemGroup();
         if (ig instanceof ModifiableItemGroup) {
             TopLevelItem item = ((ModifiableItemGroup<? extends TopLevelItem>)ig).doCreateItem(req, rsp);
             if(item!=null) {
-                jobNames.add(item.getName());
+                synchronized (this) {
+                    jobNames.add(item.getName());
+                }
                 owner.save();
             }
             return item;
         }
         return null;
+    }
+
+    @RequirePOST
+    public HttpResponse doAddJobToView(@QueryParameter String name) throws IOException, ServletException {
+        checkPermission(View.CONFIGURE);
+        if(name==null)
+            throw new Failure("Query parameter 'name' is required");
+
+        if (getOwnerItemGroup().getItem(name) == null)
+            throw new Failure("Query parameter 'name' does not correspond to a known item");
+
+        if (jobNames.add(name))
+            owner.save();
+
+        return HttpResponses.ok();
+    }
+
+    @RequirePOST
+    public HttpResponse doRemoveJobFromView(@QueryParameter String name) throws IOException, ServletException {
+        checkPermission(View.CONFIGURE);
+        if(name==null)
+            throw new Failure("Query parameter 'name' is required");
+
+        if (jobNames.remove(name))
+            owner.save();
+
+        return HttpResponses.ok();
     }
 
     @Override
@@ -259,7 +291,7 @@ public class ListView extends View implements Saveable {
     }
 
     @Extension
-    public static final class DescriptorImpl extends ViewDescriptor {
+    public static class DescriptorImpl extends ViewDescriptor {
         public String getDisplayName() {
             return Messages.ListView_DisplayName();
         }
