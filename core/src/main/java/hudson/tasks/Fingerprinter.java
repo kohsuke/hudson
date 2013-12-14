@@ -35,7 +35,7 @@ import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
 import hudson.model.BuildListener;
-import hudson.model.DependecyDeclarer;
+import jenkins.model.DependencyDeclarer;
 import hudson.model.DependencyGraph;
 import hudson.model.DependencyGraph.Dependency;
 import hudson.model.Fingerprint;
@@ -44,11 +44,9 @@ import hudson.model.FingerprintMap;
 import jenkins.model.Jenkins;
 import hudson.model.Result;
 import hudson.model.Run;
-import hudson.model.RunAction;
 import hudson.model.TaskListener;
 import hudson.remoting.VirtualChannel;
 import hudson.util.FormValidation;
-import hudson.util.IOException2;
 import hudson.util.PackedMap;
 import hudson.util.RunList;
 import net.sf.json.JSONObject;
@@ -70,17 +68,19 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import jenkins.model.RunAction2;
 
 /**
  * Records fingerprints of the specified files.
  *
  * @author Kohsuke Kawaguchi
  */
-public class Fingerprinter extends Recorder implements Serializable, DependecyDeclarer {
+public class Fingerprinter extends Recorder implements Serializable, DependencyDeclarer {
     public static boolean enableFingerprintsInDependencyGraph = Boolean.parseBoolean(System.getProperty(Fingerprinter.class.getName() + ".enableFingerprintsInDependencyGraph", "false"));
     
     /**
@@ -135,7 +135,7 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
             build.getActions().add(new FingerprintAction(build,record));
 
             if (enableFingerprintsInDependencyGraph) {
-                Jenkins.getInstance().rebuildDependencyGraph();
+                Jenkins.getInstance().rebuildDependencyGraphAsync();
             }
         } catch (IOException e) {
             e.printStackTrace(listener.error(Messages.Fingerprinter_Failed()));
@@ -157,10 +157,8 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
 
             for ( ListIterator iter = builds.listIterator(); iter.hasNext(); ) {
                 Run build = (Run) iter.next();
-                List<FingerprintAction> fingerprints = build.getActions(FingerprintAction.class);
-                for (FingerprintAction action : fingerprints) {
-                    Map<AbstractProject,Integer> deps = action.getDependencies();
-                    for (AbstractProject key : deps.keySet()) {
+                for (FingerprintAction action : build.getActions(FingerprintAction.class)) {
+                    for (AbstractProject key : action.getDependencies().keySet()) {
                         if (key == owner) {
                             continue;   // Avoid self references
                         }
@@ -239,9 +237,9 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
                     try {
                         results.add(new Record(produced,f,file.getName(),new FilePath(file).digest()));
                     } catch (IOException e) {
-                        throw new IOException2(Messages.Fingerprinter_DigestFailed(file),e);
+                        throw new IOException(Messages.Fingerprinter_DigestFailed(file),e);
                     } catch (InterruptedException e) {
-                        throw new IOException2(Messages.Fingerprinter_Aborted(),e);
+                        throw new IOException(Messages.Fingerprinter_Aborted(),e);
                     }
                 }
 
@@ -291,9 +289,11 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
     /**
      * Action for displaying fingerprints.
      */
-    public static final class FingerprintAction implements RunAction {
+    public static final class FingerprintAction implements RunAction2 {
+
+        private transient AbstractBuild build;
         
-        private final AbstractBuild build;
+        private static final Random rand = new Random();
 
         /**
          * From file name to the digest.
@@ -305,7 +305,7 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
         public FingerprintAction(AbstractBuild build, Map<String, String> record) {
             this.build = build;
             this.record = PackedMap.of(record);
-            onLoad();   // make compact
+            compact();
         }
 
         public void add(Map<String,String> moreRecords) {
@@ -313,7 +313,7 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
             r.putAll(moreRecords);
             record = PackedMap.of(r);
             ref = null;
-            onLoad();
+            compact();
         }
 
         public String getIconFileName() {
@@ -339,19 +339,26 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
             return record;
         }
 
-        public void onLoad() {
-            Run pb = build.getPreviousBuild();
-            if (pb!=null) {
-                FingerprintAction a = pb.getAction(FingerprintAction.class);
-                if (a!=null)
-                    compact(a);
+        @Override public void onLoad(Run<?,?> r) {
+            build = (AbstractBuild) r;
+            compact();
+        }
+
+        @Override public void onAttached(Run<?,?> r) {
+            // for historical reasons this setup is done in the constructor instead
+        }
+
+        private void compact() {
+            // share data structure with nearby builds, but to keep lazy loading efficient,
+            // don't go back the history forever.
+            if (rand.nextInt(2)!=0) {
+                Run pb = build.getPreviousBuild();
+                if (pb!=null) {
+                    FingerprintAction a = pb.getAction(FingerprintAction.class);
+                    if (a!=null)
+                        compact(a);
+                }
             }
-        }
-
-        public void onAttached(Run r) {
-        }
-
-        public void onBuildComplete() {
         }
 
         /**
@@ -431,7 +438,7 @@ public class Fingerprinter extends Recorder implements Serializable, DependecyDe
                 if (job==null)  continue;   // project no longer exists
                 if (job.getParent()==build.getParent())
                     continue;   // we are the parent of the build owner, that is almost like we are the owner 
-                if(job.getBuildByNumber(bp.getNumber())==null && !includeMissing)
+                if(!includeMissing && job.getBuildByNumber(bp.getNumber())==null)
                     continue;               // build no longer exists
 
                 Integer existing = r.get(job);

@@ -1,7 +1,8 @@
 /*
  * The MIT License
  * 
- * Copyright (c) 2004-2010, Sun Microsystems, Inc., Kohsuke Kawaguchi, Erik Ramfelt, Tom Huybrechts
+ * Copyright (c) 2004-2012, Sun Microsystems, Inc., Kohsuke Kawaguchi, Erik Ramfelt,
+ * Tom Huybrechts, Vincent Latombe
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,31 +24,29 @@
  */
 package hudson.model;
 
+import com.google.common.base.Predicate;
 import com.infradna.tool.bridge_method_injector.WithBridgeMethods;
-import com.thoughtworks.xstream.XStream;
-import hudson.CopyOnWrite;
-import hudson.FeedAdapter;
-import hudson.Functions;
-import hudson.Util;
-import hudson.XmlFile;
-import hudson.BulkChange;
+import hudson.*;
 import hudson.model.Descriptor.FormException;
 import hudson.model.listeners.SaveableListener;
 import hudson.security.ACL;
 import hudson.security.AccessControlled;
 import hudson.security.Permission;
 import hudson.security.SecurityRealm;
+import hudson.util.FormApply;
 import hudson.util.RunList;
 import hudson.util.XStream2;
 import jenkins.model.Jenkins;
+import jenkins.model.ModelObjectWithContextMenu;
 import net.sf.json.JSONObject;
 
 import org.acegisecurity.Authentication;
-import org.acegisecurity.AuthenticationException;
 import org.acegisecurity.GrantedAuthority;
 import org.acegisecurity.providers.UsernamePasswordAuthenticationToken;
 import org.acegisecurity.providers.anonymous.AnonymousAuthenticationToken;
 import org.acegisecurity.userdetails.UserDetails;
+import org.acegisecurity.userdetails.UsernameNotFoundException;
+import org.springframework.dao.DataAccessException;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.export.Exported;
@@ -74,6 +73,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
 
 /**
  * Represents a user.
@@ -100,8 +101,8 @@ import java.util.logging.Logger;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public class User extends AbstractModelObject implements AccessControlled, DescriptorByNameOwner, Saveable, Comparable<User> {
-
+public class User extends AbstractModelObject implements AccessControlled, DescriptorByNameOwner, Saveable, Comparable<User>, ModelObjectWithContextMenu {
+    
     private transient final String id;
 
     private volatile String fullName;
@@ -254,11 +255,14 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
         try {
             UserDetails u = Jenkins.getInstance().getSecurityRealm().loadUserByUsername(id);
             return new UsernamePasswordAuthenticationToken(u.getUsername(), "", u.getAuthorities());
-        } catch (AuthenticationException e) {
-            // TODO: use the stored GrantedAuthorities
-            return new UsernamePasswordAuthenticationToken(id, "",
-                new GrantedAuthority[]{SecurityRealm.AUTHENTICATED_AUTHORITY});
+        } catch (UsernameNotFoundException e) {
+            // ignore
+        } catch (DataAccessException e) {
+            // ignore
         }
+        // TODO: use the stored GrantedAuthorities
+        return new UsernamePasswordAuthenticationToken(id, "",
+            new GrantedAuthority[]{SecurityRealm.AUTHENTICATED_AUTHORITY});
     }
 
     /**
@@ -278,7 +282,7 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
      * <p>
      * This is used to avoid null {@link User} instance.
      */
-    public static User getUnknown() {
+    public static @Nonnull User getUnknown() {
         return get("unknown");
     }
 
@@ -290,22 +294,66 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
      *      (by creating a new {@link User} object if none exists.)
      *      If false, this method will return null if {@link User} object
      *      with the given name doesn't exist.
+     * @deprecated use {@link User#get(String, boolean, java.util.Map)}
      */
     public static User get(String idOrFullName, boolean create) {
+        return get(idOrFullName, create, Collections.emptyMap());
+    }
+
+    /**
+     * Gets the {@link User} object by its id or full name.
+     *
+     * @param create
+     *      If true, this method will never return null for valid input
+     *      (by creating a new {@link User} object if none exists.)
+     *      If false, this method will return null if {@link User} object
+     *      with the given name doesn't exist.
+     *
+     * @param context
+     *      contextual environment this user idOfFullName was retrieved from,
+     *      that can help resolve the user ID
+     */
+    public static User get(String idOrFullName, boolean create, Map context) {
+
         if(idOrFullName==null)
             return null;
-        String id = idOrFullName.replace('\\', '_').replace('/', '_').replace('<','_')
-                                .replace('>','_');  // 4 replace() still faster than regex
-        if (Functions.isWindows()) id = id.replace(':','_');
 
+        // sort resolvers by priority
+        List<CanonicalIdResolver> resolvers = new ArrayList<CanonicalIdResolver>(Jenkins.getInstance().getExtensionList(CanonicalIdResolver.class));
+        Collections.sort(resolvers);
+
+        String id = null;
+        for (CanonicalIdResolver resolver : resolvers) {
+            id = resolver.resolveCanonicalId(idOrFullName, context);
+            if (id != null) {
+                LOGGER.log(Level.FINE, "{0} mapped {1} to {2}", new Object[] {resolver, idOrFullName, id});
+                break;
+            }
+        }
+        // DefaultUserCanonicalIdResolver will always return a non-null id if all other CanonicalIdResolver failed
+
+        return getOrCreate(id, idOrFullName, create);
+    }
+
+    /**
+     * retrieve a user by its ID, and create a new one if requested
+     */
+    private static User getOrCreate(String id, String fullName, boolean create) {
         String idkey = id.toLowerCase(Locale.ENGLISH);
 
         User u = byName.get(idkey);
-        if(u==null && (create || getConfigFileFor(id).exists())) {
-            User tmp = new User(id, idOrFullName);
+        if (u==null && (create || getConfigFileFor(id).exists())) {
+            User tmp = new User(id, fullName);
             User prev = byName.putIfAbsent(idkey, u = tmp);
-            if (prev!=null)
-                u = prev;   // if somehas already put a value in the map, use it
+            if (prev != null) {
+                u = prev; // if some has already put a value in the map, use it
+                if (LOGGER.isLoggable(Level.FINE) && !fullName.equals(prev.getFullName())) {
+                    LOGGER.log(Level.FINE, "mismatch on fullName (‘" + fullName + "’ vs. ‘" + prev.getFullName() + "’) for ‘" + id + "’", new Throwable());
+                }
+            }
+            if (LOGGER.isLoggable(Level.FINE) && id.equals(fullName) && fullName.matches(".+ _\\S+@\\S+_")) {
+                LOGGER.log(Level.FINE, "[JENKINS-16332] Suspicious fullName being stored: " + fullName, new Throwable());
+            }
         }
         return u;
     }
@@ -313,7 +361,7 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
     /**
      * Gets the {@link User} object by its id or full name.
      */
-    public static User get(String idOrFullName) {
+    public static @Nonnull User get(String idOrFullName) {
         return get(idOrFullName,true);
     }
 
@@ -322,7 +370,7 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
      * if the current user is anonymous.
      * @since 1.172
      */
-    public static User current() {
+    public static @CheckForNull User current() {
         Authentication a = Jenkins.getAuthentication();
         if(a instanceof AnonymousAuthenticationToken)
             return null;
@@ -346,8 +394,10 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
             if(subdirs==null)       return Collections.emptyList(); // shall never happen
 
             for (File subdir : subdirs)
-                if(new File(subdir,"config.xml").exists())
-                    User.get(subdir.getName());
+                if(new File(subdir,"config.xml").exists()) {
+                    String name = subdir.getName();
+                    User.getOrCreate(name, name, true);
+                }
 
             lastScanned = System.currentTimeMillis();
         }
@@ -383,20 +433,33 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
         return getFullName();
     }
 
+    /** true if {@link AbstractBuild#hasParticipant} or {@link hudson.model.Cause.UserIdCause} */
+    private boolean relatedTo(AbstractBuild<?,?> b) {
+        if (b.hasParticipant(this)) {
+            return true;
+        }
+        for (Cause cause : b.getCauses()) {
+            if (cause instanceof Cause.UserIdCause) {
+                String userId = ((Cause.UserIdCause) cause).getUserId();
+                if (userId != null && userId.equals(getId())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Gets the list of {@link Build}s that include changes by this user,
      * by the timestamp order.
-     * 
-     * TODO: do we need some index for this?
      */
     @WithBridgeMethods(List.class)
     public RunList getBuilds() {
-        List<AbstractBuild> r = new ArrayList<AbstractBuild>();
-        for (AbstractProject<?,?> p : Jenkins.getInstance().getAllItems(AbstractProject.class))
-            for (AbstractBuild<?,?> b : p.getBuilds().newBuilds())
-                if(b.hasParticipant(this))
-                    r.add(b);
-        return RunList.fromRuns(r);
+    	return new RunList<Run<?,?>>(Jenkins.getInstance().getAllItems(Job.class)).filter(new Predicate<Run<?,?>>() {
+            @Override public boolean apply(Run<?,?> r) {
+                return r instanceof AbstractBuild && relatedTo((AbstractBuild<?,?>) r);
+            }
+        });
     }
 
     /**
@@ -494,7 +557,7 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
 
         save();
 
-        rsp.sendRedirect(".");
+        FormApply.success(".").generateResponse(req,rsp,this);
     }
 
     /**
@@ -514,21 +577,18 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
     }
 
     public void doRssAll(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        rss(req, rsp, " all builds", RunList.fromRuns(getBuilds()), Run.FEED_ADAPTER);
+        rss(req, rsp, " all builds", getBuilds(), Run.FEED_ADAPTER);
     }
 
     public void doRssFailed(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        rss(req, rsp, " regression builds", RunList.fromRuns(getBuilds()).regressionOnly(), Run.FEED_ADAPTER);
+        rss(req, rsp, " regression builds", getBuilds().regressionOnly(), Run.FEED_ADAPTER);
     }
 
     public void doRssLatest(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
         final List<Run> lastBuilds = new ArrayList<Run>();
-        for (final TopLevelItem item : Jenkins.getInstance().getItems()) {
-            if (!(item instanceof Job)) continue;
-            for (Run r = ((Job) item).getLastBuild(); r != null; r = r.getPreviousBuild()) {
-                if (!(r instanceof AbstractBuild)) continue;
-                final AbstractBuild b = (AbstractBuild) r;
-                if (b.hasParticipant(this)) {
+        for (AbstractProject<?,?> p : Jenkins.getInstance().getAllItems(AbstractProject.class)) {
+            for (AbstractBuild<?,?> b = p.getLastBuild(); b != null; b = b.getPreviousBuild()) {
+                if (relatedTo(b)) {
                     lastBuilds.add(b);
                     break;
                 }
@@ -553,7 +613,7 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
     /**
      * Used to load/save user configuration.
      */
-    private static final XStream XSTREAM = new XStream2();
+    public static final XStream2 XSTREAM = new XStream2();
 
     private static final Logger LOGGER = Logger.getLogger(User.class.getName());
 
@@ -588,18 +648,125 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
                 && new File(getRootDir(), id).exists();
     }
 
+    /**
+     * Checks for authorities (groups) associated with this user.
+     * If the caller lacks {@link Jenkins#ADMINISTER}, or any problems arise, returns an empty list.
+     * {@link SecurityRealm#AUTHENTICATED_AUTHORITY} and the username, if present, are omitted.
+     * @since 1.498
+     * @return a possibly empty list
+     */
+    public @Nonnull List<String> getAuthorities() {
+        if (!Jenkins.getInstance().hasPermission(Jenkins.ADMINISTER)) {
+            return Collections.emptyList();
+        }
+        List<String> r = new ArrayList<String>();
+        for (GrantedAuthority a : impersonate().getAuthorities()) {
+            if (a.equals(SecurityRealm.AUTHENTICATED_AUTHORITY)) {
+                continue;
+            }
+            String n = a.getAuthority();
+            if (n != null && !n.equals(id)) {
+                r.add(n);
+            }
+        }
+        return r;
+    }
+
     public Descriptor getDescriptorByName(String className) {
         return Jenkins.getInstance().getDescriptorByName(className);
     }
-
+    
     public Object getDynamic(String token) {
-        for (UserProperty property: getProperties().values()) {
-            if (property instanceof Action) {
-                Action a= (Action) property;
-            if(a.getUrlName().equals(token) || a.getUrlName().equals('/'+token))
-                return a;
-            }
+        for(Action action: getTransientActions()){
+            if(action.getUrlName().equals(token))
+                return action;
+        }
+        for(Action action: getPropertyActions()){
+            if(action.getUrlName().equals(token))
+                return action;
         }
         return null;
     }
+    
+    /**
+     * Return all properties that are also actions.
+     * 
+     * @return the list can be empty but never null. read only.
+     */
+    public List<Action> getPropertyActions() {
+        List<Action> actions = new ArrayList<Action>();
+        for (UserProperty userProp : getProperties().values()) {
+            if (userProp instanceof Action) {
+                actions.add((Action) userProp);
+            }
+        }
+        return Collections.unmodifiableList(actions);
+    }
+    
+    /**
+     * Return all transient actions associated with this user.
+     * 
+     * @return the list can be empty but never null. read only.
+     */
+    public List<Action> getTransientActions() {
+        List<Action> actions = new ArrayList<Action>();
+        for (TransientUserActionFactory factory: TransientUserActionFactory.all()) {
+            actions.addAll(factory.createFor(this));
+        }
+        return Collections.unmodifiableList(actions);
+    }
+
+    public ContextMenu doContextMenu(StaplerRequest request, StaplerResponse response) throws Exception {
+        return new ContextMenu().from(this,request,response);
+    }
+
+    public static abstract class CanonicalIdResolver extends AbstractDescribableImpl<CanonicalIdResolver> implements ExtensionPoint, Comparable<CanonicalIdResolver> {
+
+        /**
+         * context key for realm (domain) where idOrFullName has been retreived from.
+         * Can be used (for example) to distinguish ambiguous committer ID using the SCM URL.
+         * Associated Value is a {@link String}
+         */
+        public static final String REALM = "realm";
+
+        public int compareTo(CanonicalIdResolver o) {
+            // reverse priority order
+            int i = getPriority();
+            int j = o.getPriority();
+            return i>j ? -1 : (i==j ? 0:1);
+        }
+
+        /**
+         * extract user ID from idOrFullName with help from contextual infos.
+         * can return <code>null</code> if no user ID matched the input
+         */
+        public abstract @CheckForNull String resolveCanonicalId(String idOrFullName, Map<String, ?> context);
+
+        public int getPriority() {
+            return 1;
+        }
+
+    }
+
+
+    /**
+     * Resolve user ID from full name
+     */
+    @Extension
+    public static class FullNameIdResolver extends CanonicalIdResolver {
+
+        @Override
+        public String resolveCanonicalId(String idOrFullName, Map<String, ?> context) {
+            for (User user : getAll()) {
+                if (idOrFullName.equals(user.getFullName())) return user.getId();
+            }
+            return null;
+        }
+
+        @Override
+        public int getPriority() {
+            return -1; // lower than default
+        }
+    }
 }
+

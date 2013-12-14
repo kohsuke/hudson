@@ -29,10 +29,15 @@ import hudson.Util;
 import hudson.EnvVars;
 import hudson.model.AbstractBuild;
 import hudson.model.BuildListener;
+import hudson.model.Node;
 import hudson.model.TaskListener;
+import hudson.remoting.ChannelClosedException;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.annotation.Nonnull;
 
 /**
  * Common part between {@link Shell} and {@link BatchFile}.
@@ -60,7 +65,15 @@ public abstract class CommandInterpreter extends Builder {
 
     public boolean perform(AbstractBuild<?,?> build, Launcher launcher, TaskListener listener) throws InterruptedException {
         FilePath ws = build.getWorkspace();
+        if (ws == null) {
+            Node node = build.getBuiltOn();
+            if (node == null) {
+                throw new NullPointerException("no such build node: " + build.getBuiltOnStr());
+            }
+            throw new NullPointerException("no workspace from node " + node + " which is computer " + node.toComputer() + " and has channel " + node.getChannel());
+        }
         FilePath script=null;
+        int r = -1;
         try {
             try {
                 script = createScriptFile(ws);
@@ -70,7 +83,6 @@ public abstract class CommandInterpreter extends Builder {
                 return false;
             }
 
-            int r;
             try {
                 EnvVars envVars = build.getEnvironment(listener);
                 // on Windows environment variables are converted to all upper case,
@@ -81,17 +93,29 @@ public abstract class CommandInterpreter extends Builder {
 
                 r = launcher.launch().cmds(buildCommandLine(script)).envs(envVars).stdout(listener).pwd(ws).join();
             } catch (IOException e) {
-                Util.displayIOException(e,listener);
+                Util.displayIOException(e, listener);
                 e.printStackTrace(listener.fatalError(Messages.CommandInterpreter_CommandFailed()));
-                r = -1;
             }
             return r==0;
         } finally {
             try {
                 if(script!=null)
-                script.delete();
+                    script.delete();
             } catch (IOException e) {
-                Util.displayIOException(e,listener);
+                if (r==-1 && e.getCause() instanceof ChannelClosedException) {
+                    // JENKINS-5073
+                    // r==-1 only when the execution of the command resulted in IOException,
+                    // and we've already reported that error. A common error there is channel
+                    // losing a connection, and in that case we don't want to confuse users
+                    // by reporting the 2nd problem. Technically the 1st exception may not be
+                    // a channel closed error, but that's rare enough, and JENKINS-5073 is common enough
+                    // that this suppressing of the error would be justified
+                    LOGGER.log(Level.FINE, "Script deletion failed", e);
+                } else {
+                    Util.displayIOException(e,listener);
+                    e.printStackTrace( listener.fatalError(Messages.CommandInterpreter_UnableToDelete(script)) );
+                }
+            } catch (Exception e) {
                 e.printStackTrace( listener.fatalError(Messages.CommandInterpreter_UnableToDelete(script)) );
             }
         }
@@ -100,7 +124,7 @@ public abstract class CommandInterpreter extends Builder {
     /**
      * Creates a script file in a temporary name in the specified directory.
      */
-    public FilePath createScriptFile(FilePath dir) throws IOException, InterruptedException {
+    public FilePath createScriptFile(@Nonnull FilePath dir) throws IOException, InterruptedException {
         return dir.createTextTempFile("hudson", getFileExtension(), getContents(), false);
     }
 
@@ -109,4 +133,6 @@ public abstract class CommandInterpreter extends Builder {
     protected abstract String getContents();
 
     protected abstract String getFileExtension();
+
+    private static final Logger LOGGER = Logger.getLogger(CommandInterpreter.class.getName());
 }

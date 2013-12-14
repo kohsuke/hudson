@@ -32,8 +32,6 @@ import hudson.tasks.junit.TestAction;
 import hudson.tasks.junit.TestResultAction;
 import jenkins.model.Jenkins;
 
-import org.apache.commons.lang.StringEscapeUtils;
-import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.*;
 import org.kohsuke.stapler.export.ExportedBean;
 
@@ -41,8 +39,6 @@ import com.google.common.collect.MapMaker;
 
 import javax.servlet.ServletException;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.*;
 import java.util.logging.Logger;
 
@@ -99,7 +95,6 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
      *
      * @deprecated This method returns a JUnit specific class. Use
      * {@link #getTopLevelTestResult()} instead for a more general interface.
-     * @return
      */
     @Override
     public hudson.tasks.junit.TestResult getTestResult() {
@@ -110,8 +105,6 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
 
     /**
      * Returns the top level test result data.
-     * 
-     * @return
      */    
     public TestResult getTopLevelTestResult() {
         TestObject parent = getParent();
@@ -142,7 +135,7 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
         StringBuilder buf = new StringBuilder();
         TestObject next = this;
         TestObject cur = this;  
-        // Walk up my ancesotors from leaf to root, looking for "it"
+        // Walk up my ancestors from leaf to root, looking for "it"
         // and accumulating a relative url as I go
         while (next!=null && it!=next) {
             cur = next;
@@ -219,7 +212,6 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
 
     /**
      * Get a list of all TestActions associated with this TestObject. 
-     * @return
      */
     @Override
     public List<TestAction> getTestActions() {
@@ -236,7 +228,6 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
      * Gets a test action of the class passed in. 
      * @param klazz
      * @param <T> an instance of the class passed in
-     * @return
      */
     @Override
     public <T> T getTestAction(Class<T> klazz) {
@@ -264,7 +255,7 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
 
     /**
      * Find the test result corresponding to the one identified by <code>id></code>
-     * withint this test result.
+     * within this test result.
      *
      * @param id The path to the original test result
      * @return A corresponding test result, or null if there is no corresponding
@@ -335,19 +326,25 @@ public abstract class TestObject extends hudson.tasks.junit.TestObject {
     /**
      * #2988: uniquifies a {@link #getSafeName} amongst children of the parent.
      */
-    protected final synchronized String uniquifyName(
-            Collection<? extends TestObject> siblings, String base) {
-        String uniquified = base;
-        int sequence = 1;
-        for (TestObject sibling : siblings) {
-            if (sibling != this && uniquified.equals(UNIQUIFIED_NAMES.get(sibling))) {
-                uniquified = base + '_' + ++sequence;
+    protected final String uniquifyName(Collection<? extends TestObject> siblings, String base) {
+        synchronized (UNIQUIFIED_NAMES) {
+            String uniquified = base;
+            Map<TestObject,Void> taken = UNIQUIFIED_NAMES.get(base);
+            if (taken == null) {
+                taken = new WeakHashMap<TestObject,Void>();
+                UNIQUIFIED_NAMES.put(base, taken);
+            } else {
+                Set<TestObject> similars = new HashSet<TestObject>(taken.keySet());
+                similars.retainAll(new HashSet<TestObject>(siblings));
+                if (!similars.isEmpty()) {
+                    uniquified = base + '_' + (similars.size() + 1);
+                }
             }
+            taken.put(this, null);
+            return uniquified;
         }
-        UNIQUIFIED_NAMES.put(this, uniquified);
-        return uniquified;
     }
-    private static final Map<TestObject, String> UNIQUIFIED_NAMES = new MapMaker().weakKeys().makeMap();
+    private static final Map<String,Map<TestObject,Void>> UNIQUIFIED_NAMES = new MapMaker().makeMap();
 
     /**
      * Replaces URL-unsafe characters.

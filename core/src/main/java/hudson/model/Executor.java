@@ -23,43 +23,42 @@
  */
 package hudson.model;
 
-import hudson.model.Queue.Executable;
-import hudson.Util;
 import hudson.FilePath;
-import jenkins.model.CauseOfInterruption;
-import jenkins.model.CauseOfInterruption.UserInterruption;
+import hudson.Util;
+import hudson.model.Queue.Executable;
 import hudson.model.queue.Executables;
 import hudson.model.queue.SubTask;
 import hudson.model.queue.Tasks;
 import hudson.model.queue.WorkUnit;
-import hudson.util.TimeUnit2;
-import hudson.util.InterceptingProxy;
 import hudson.security.ACL;
+import hudson.util.InterceptingProxy;
+import hudson.util.TimeUnit2;
+import jenkins.model.CauseOfInterruption;
+import jenkins.model.CauseOfInterruption.UserInterruption;
 import jenkins.model.InterruptedBuildAction;
 import jenkins.model.Jenkins;
 import org.acegisecurity.Authentication;
-import org.acegisecurity.context.SecurityContext;
-import org.acegisecurity.providers.anonymous.AnonymousAuthenticationToken;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.HttpResponses;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
-import org.kohsuke.stapler.export.ExportedBean;
 import org.kohsuke.stapler.export.Exported;
-import org.acegisecurity.context.SecurityContextHolder;
+import org.kohsuke.stapler.export.ExportedBean;
+import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import javax.servlet.ServletException;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Vector;
-import java.util.logging.Logger;
 import java.util.logging.Level;
-import java.lang.reflect.Method;
+import java.util.logging.Logger;
 
 import static hudson.model.queue.Executables.*;
-import static java.util.Arrays.asList;
-import static java.util.logging.Level.FINE;
+import static java.util.logging.Level.*;
+import javax.annotation.CheckForNull;
 
 
 /**
@@ -76,22 +75,28 @@ public class Executor extends Thread implements ModelObject {
     /**
      * Used to track when a job was last executed.
      */
-    private long finishTime;
+    private final long creationTime = System.currentTimeMillis();
 
     /**
      * Executor number that identifies it among other executors for the same {@link Computer}.
      */
     private int number;
     /**
-     * {@link Queue.Executable} being executed right now, or null if the executor is idle.
+     * {@link hudson.model.Queue.Executable} being executed right now, or null if the executor is idle.
      */
     private volatile Queue.Executable executable;
 
+    /**
+     * When {@link Queue} allocates a work for this executor, this field is set
+     * and the executor is {@linkplain Thread#start() started}.
+     */
     private volatile WorkUnit workUnit;
 
     private Throwable causeOfDeath;
 
     private boolean induceDeath;
+
+    private volatile boolean started;
 
     /**
      * When the executor is interrupted, we allow the code that interrupted the thread to override the
@@ -124,7 +129,7 @@ public class Executor extends Thread implements ModelObject {
      */
     public void interrupt(Result result) {
         Authentication a = Jenkins.getAuthentication();
-        if(a instanceof AnonymousAuthenticationToken || a==ACL.SYSTEM)
+        if (a == ACL.SYSTEM)
             interrupt(result, new CauseOfInterruption[0]);
         else {
             // worth recording who did it
@@ -137,6 +142,17 @@ public class Executor extends Thread implements ModelObject {
      * Interrupt the execution. Mark the cause and the status accordingly.
      */
     public void interrupt(Result result, CauseOfInterruption... causes) {
+        if (LOGGER.isLoggable(FINE))
+            LOGGER.log(FINE, String.format("%s is interrupted(%s): %s", getDisplayName(), result, Util.join(Arrays.asList(causes),",")), new InterruptedException());
+
+        synchronized (this) {
+            if (!started) {
+                // not yet started, so simply dispose this
+                owner.removeExecutor(this);
+                return;
+            }
+        }
+
         interruptStatus = result;
         synchronized (this.causes) {
             for (CauseOfInterruption c : causes) {
@@ -175,96 +191,78 @@ public class Executor extends Thread implements ModelObject {
 
     @Override
     public void run() {
+        startTime = System.currentTimeMillis();
+
         // run as the system user. see ACL.SYSTEM for more discussion about why this is somewhat broken
         ACL.impersonate(ACL.SYSTEM);
 
         try {
-            finishTime = System.currentTimeMillis();
-            while(shouldRun()) {
-                executable = null;
-                workUnit = null;
-                interruptStatus = null;
-                causes.clear();
+            if (induceDeath)        throw new ThreadDeath();
 
-                synchronized(owner) {
-                    if(owner.getNumExecutors()<owner.getExecutors().size()) {
-                        // we've got too many executors.
-                        owner.removeExecutor(this);
-                        return;
+            SubTask task;
+            // transition from idle to building.
+            // perform this state change as an atomic operation wrt other queue operations
+            synchronized (queue) {
+                workUnit.setExecutor(this);
+                queue.onStartExecuting(this);
+                if (LOGGER.isLoggable(FINE))
+                    LOGGER.log(FINE, getName()+" grabbed "+workUnit+" from queue");
+                task = workUnit.work;
+                executable = task.createExecutable();
+                workUnit.setExecutable(executable);
+            }
+            if (LOGGER.isLoggable(FINE))
+                LOGGER.log(FINE, getName()+" is going to execute "+executable);
+
+            Throwable problems = null;
+            try {
+                workUnit.context.synchronizeStart();
+
+                if (executable instanceof Actionable) {
+                    for (Action action: workUnit.context.actions) {
+                        ((Actionable) executable).addAction(action);
                     }
                 }
 
-                // clear the interrupt flag as a precaution.
-                // sometime an interrupt aborts a build but without clearing the flag.
-                // see issue #1583
-                if (Thread.interrupted())   continue;
-                if (induceDeath)        throw new ThreadDeath();
-
-                SubTask task;
+                ACL.impersonate(workUnit.context.item.authenticate());
+                setName(getName() + " : executing " + executable.toString());
+                if (LOGGER.isLoggable(FINE))
+                    LOGGER.log(FINE, getName()+" is now executing "+executable);
+                queue.execute(executable, task);
+            } catch (Throwable e) {
+                // for some reason the executor died. this is really
+                // a bug in the code, but we don't want the executor to die,
+                // so just leave some info and go on to build other things
+                LOGGER.log(Level.SEVERE, "Executor threw an exception", e);
+                workUnit.context.abort(e);
+                problems = e;
+            } finally {
+                long time = System.currentTimeMillis()-startTime;
+                if (LOGGER.isLoggable(FINE))
+                    LOGGER.log(FINE, getName()+" completed "+executable+" in "+time+"ms");
                 try {
-                    // transition from idle to building.
-                    // perform this state change as an atomic operation wrt other queue operations
-                    synchronized (queue) {
-                        workUnit = grabJob();
-                        workUnit.setExecutor(this);
-                        if (LOGGER.isLoggable(FINE))
-                            LOGGER.log(FINE, getName()+" grabbed "+workUnit+" from queue");
-                        task = workUnit.work;
-                        startTime = System.currentTimeMillis();
-                        executable = task.createExecutable();
-                    }
-                    if (LOGGER.isLoggable(FINE))
-                        LOGGER.log(FINE, getName()+" is going to execute "+executable);
-                } catch (IOException e) {
-                    LOGGER.log(Level.SEVERE, "Executor threw an exception", e);
-                    continue;
+                    workUnit.context.synchronizeEnd(executable,problems,time);
                 } catch (InterruptedException e) {
-                    LOGGER.log(FINE, getName()+" interrupted",e);
-                    continue;
-                }
-
-                Throwable problems = null;
-                final String threadName = getName();
-                try {
-                    workUnit.context.synchronizeStart();
-
-                    if (executable instanceof Actionable) {
-                        for (Action action: workUnit.context.actions) {
-                            ((Actionable) executable).addAction(action);
-                        }
-                    }
-                    setName(threadName+" : executing "+executable.toString());
-                    if (LOGGER.isLoggable(FINE))
-                        LOGGER.log(FINE, getName()+" is now executing "+executable);
-                    queue.execute(executable, task);
-                } catch (Throwable e) {
-                    // for some reason the executor died. this is really
-                    // a bug in the code, but we don't want the executor to die,
-                    // so just leave some info and go on to build other things
-                    LOGGER.log(Level.SEVERE, "Executor threw an exception", e);
                     workUnit.context.abort(e);
-                    problems = e;
                 } finally {
-                    setName(threadName);
-                    finishTime = System.currentTimeMillis();
-                    if (LOGGER.isLoggable(FINE))
-                        LOGGER.log(FINE, getName()+" completed "+executable+" in "+(finishTime-startTime)+"ms");
-                    try {
-                        workUnit.context.synchronizeEnd(executable,problems,finishTime - startTime);
-                    } catch (InterruptedException e) {
-                        workUnit.context.abort(e);
-                        continue;
-                    } finally {
-                        workUnit.setExecutor(null);
-                    }
+                    workUnit.setExecutor(null);
                 }
             }
-        } catch(RuntimeException e) {
+        } catch (InterruptedException e) {
+            LOGGER.log(FINE, getName()+" interrupted",e);
+            // die peacefully
+        } catch(Exception e) {
             causeOfDeath = e;
-            throw e;
+            LOGGER.log(SEVERE, "Unexpected executor death", e);
         } catch (Error e) {
             causeOfDeath = e;
-            throw e;
+            LOGGER.log(SEVERE, "Unexpected executor death", e);
+        } finally {
+            if (causeOfDeath==null)
+                // let this thread die and be replaced by a fresh unstarted instance
+                owner.removeExecutor(this);
+
+            queue.scheduleMaintenance();
         }
     }
 
@@ -273,22 +271,10 @@ public class Executor extends Thread implements ModelObject {
      */
     public void killHard() {
         induceDeath = true;
-        interrupt();
     }
 
     /**
-     * Returns true if we should keep going.
-     */
-    protected boolean shouldRun() {
-        return Jenkins.getInstance() != null && !Jenkins.getInstance().isTerminating();
-    }
-
-    protected WorkUnit grabJob() throws InterruptedException {
-        return queue.pop();
-    }
-
-    /**
-     * Returns the current {@link Queue.Task} this executor is running.
+     * Returns the current {@link hudson.model.Queue.Task} this executor is running.
      *
      * @return
      *      null if the executor is idle.
@@ -357,6 +343,17 @@ public class Executor extends Thread implements ModelObject {
      */
     public boolean isBusy() {
         return executable!=null;
+    }
+
+    public boolean isActive() {
+        return !started || isAlive();
+    }
+
+    /**
+     * Returns true if this executor is waiting for a task to execute.
+     */
+    public boolean isParking() {
+        return !started;
     }
 
     /**
@@ -468,15 +465,43 @@ public class Executor extends Thread implements ModelObject {
     }
 
     /**
-     * Stops the current build.
+     * Can't start executor like you normally start a thread.
+     *
+     * @see #start(WorkUnit)
      */
+    @Override
+    public synchronized void start() {
+        throw new UnsupportedOperationException();
+    }
+
+    /*protected*/ synchronized void start(WorkUnit task) {
+        this.workUnit = task;
+        super.start();
+        started = true;
+    }
+
+
+    /**
+     * @deprecated as of 1.489
+     *      Use {@link #doStop()}.
+     */
+    @RequirePOST
     public void doStop( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
+        doStop().generateResponse(req,rsp,this);
+    }
+
+    /**
+     * Stops the current build.
+     * 
+     * @since 1.489
+     */
+    public HttpResponse doStop() {
         Queue.Executable e = executable;
         if(e!=null) {
             Tasks.getOwnerTaskOf(getParentOf(e)).checkAbortPermission();
             interrupt();
         }
-        rsp.forwardToPreviousPage(req);
+        return HttpResponses.forwardToPreviousPage();
     }
 
     /**
@@ -507,7 +532,7 @@ public class Executor extends Thread implements ModelObject {
      */
     public long getIdleStartMilliseconds() {
         if (isIdle())
-            return Math.max(finishTime, owner.getConnectTime());
+            return Math.max(creationTime, owner.getConnectTime());
         else {
             return Math.max(startTime + Math.max(0, Executables.getEstimatedDurationFor(executable)),
                     System.currentTimeMillis() + 15000);
@@ -542,7 +567,7 @@ public class Executor extends Thread implements ModelObject {
     /**
      * Returns the executor of the current thread or null if current thread is not an executor.
      */
-    public static Executor currentExecutor() {
+    public static @CheckForNull Executor currentExecutor() {
         Thread t = Thread.currentThread();
         if (t instanceof Executor) return (Executor) t;
         return IMPERSONATION.get();
@@ -554,7 +579,7 @@ public class Executor extends Thread implements ModelObject {
      * was compiled against Hudson < 1.383
      *
      * @deprecated as of 1.388
-     *      Use {@link Executables#getEstimatedDurationFor(Executable)}
+     *      Use {@link Executables#getEstimatedDurationFor(Queue.Executable)}
      */
     public static long getEstimatedDurationFor(Executable e) {
         return Executables.getEstimatedDurationFor(e);
@@ -567,5 +592,4 @@ public class Executor extends Thread implements ModelObject {
     private static final ThreadLocal<Executor> IMPERSONATION = new ThreadLocal<Executor>();
 
     private static final Logger LOGGER = Logger.getLogger(Executor.class.getName());
-
 }

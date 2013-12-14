@@ -34,16 +34,15 @@ import hudson.cli.declarative.CLIMethod;
 import hudson.cli.declarative.CLIResolver;
 import hudson.model.listeners.ItemListener;
 import hudson.model.listeners.SaveableListener;
-import hudson.search.SearchIndexBuilder;
 import hudson.security.AccessControlled;
 import hudson.security.Permission;
 import hudson.security.ACL;
 import hudson.util.AlternativeUiTextProvider;
 import hudson.util.AlternativeUiTextProvider.Message;
 import hudson.util.AtomicFileWriter;
-import hudson.util.IOException2;
 import hudson.util.IOUtils;
 import jenkins.model.Jenkins;
+import jenkins.model.Jenkins.MasterComputer;
 import org.apache.tools.ant.taskdefs.Copy;
 import org.apache.tools.ant.types.FileSet;
 import org.kohsuke.stapler.WebMethod;
@@ -53,8 +52,7 @@ import org.kohsuke.stapler.export.ExportedBean;
 import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
+import javax.annotation.Nonnull;
 
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -65,6 +63,7 @@ import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import javax.servlet.ServletException;
+import javax.xml.transform.Source;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
@@ -159,15 +158,17 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
     }
              
     public File getRootDir() {
-        return parent.getRootDirFor(this);
+        return getParent().getRootDirFor(this);
     }
 
     /**
      * This bridge method is to maintain binary compatibility with {@link TopLevelItem#getParent()}.
      */
     @WithBridgeMethods(value=Jenkins.class,castRequired=true)
-    public ItemGroup getParent() {
-        assert parent!=null;
+    @Override public @Nonnull ItemGroup getParent() {
+        if (parent == null) {
+            throw new IllegalStateException("no parent set on " + getClass().getName() + "[" + name + "]");
+        }
         return parent;
     }
 
@@ -185,6 +186,7 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
     public void setDescription(String description) throws IOException {
         this.description = description;
         save();
+        ItemListener.fireOnUpdated(this);
     }
 
     /**
@@ -266,7 +268,7 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
                         cp.setProject(new org.apache.tools.ant.Project());
                         cp.setTodir(newRoot);
                         FileSet src = new FileSet();
-                        src.setDir(getRootDir());
+                        src.setDir(oldRoot);
                         cp.addFileset(src);
                         cp.setOverwrite(true);
                         cp.setPreserveLastModified(true);
@@ -324,41 +326,39 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
     public final String getFullDisplayName() {
         String n = getParent().getFullDisplayName();
         if(n.length()==0)   return getDisplayName();
-        else                return n+" \u00BB "+getDisplayName();
+        else                return n+" » "+getDisplayName();
+    }
+    
+    /**
+     * Gets the display name of the current item relative to the given group.
+     *
+     * @since 1.515
+     * @param p the ItemGroup used as point of reference for the item
+     * @return
+     *      String like "foo » bar"
+     */
+    public String getRelativeDisplayNameFrom(ItemGroup p) {
+        return Functions.getRelativeDisplayNameFrom(this, p);
+    }
+    
+    /**
+     * This method only exists to disambiguate {@link #getRelativeNameFrom(ItemGroup)} and {@link #getRelativeNameFrom(Item)}
+     * @since 1.512
+     * @see #getRelativeNameFrom(ItemGroup)
+     */
+    public String getRelativeNameFromGroup(ItemGroup p) {
+        return getRelativeNameFrom(p);
     }
 
+    /**
+     * @param p
+     *  The ItemGroup instance used as context to evaluate the relative name of this AbstractItem
+     * @return
+     *  The name of the current item, relative to p.
+     *  Nested ItemGroups are separated by / character.
+     */
     public String getRelativeNameFrom(ItemGroup p) {
-        // first list up all the parents
-        Map<ItemGroup,Integer> parents = new HashMap<ItemGroup,Integer>();
-        int depth=0;
-        while (p!=null) {
-            parents.put(p, depth++);
-            if (p instanceof Item)
-                p = ((Item)p).getParent();
-            else
-                p = null;
-        }
-
-        StringBuilder buf = new StringBuilder();
-        Item i=this;
-        while (true) {
-            if (buf.length()>0) buf.insert(0,'/');
-            buf.insert(0,i.getName());
-            ItemGroup g = i.getParent();
-
-            Integer d = parents.get(g);
-            if (d!=null) {
-                String s="";
-                for (int j=d; j>0; j--)
-                    s+="../";
-                return s+buf;
-            }
-
-            if (g instanceof Item)
-                i = (Item)g;
-            else
-                return null;
-        }
+        return Functions.getRelativeNameFrom(this, p);
     }
 
     public String getRelativeNameFrom(Item item) {
@@ -405,7 +405,9 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
     }
 
     public String getShortUrl() {
-        return getParent().getUrlChildPrefix()+'/'+Util.rawEncode(getName())+'/';
+        String prefix = getParent().getUrlChildPrefix();
+        String subdir = Util.rawEncode(getName());
+        return prefix.equals(".") ? subdir + '/' : prefix + '/' + subdir + '/';
     }
 
     public String getSearchUrl() {
@@ -477,6 +479,9 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
 
     /**
      * Deletes this item.
+     * Note on the funny name: for reasons of historical compatibility, this URL is {@code /doDelete}
+     * since it predates {@code <l:confirmationLink>}. {@code /delete} goes to a Jelly page
+     * which should now be unused by core but is left in case plugins are still using it.
      */
     @CLIMethod(name="delete-job")
     @RequirePOST
@@ -506,21 +511,23 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
         checkPermission(DELETE);
         performDelete();
 
-        try {
-            invokeOnDeleted();
-        } catch (AbstractMethodError e) {
-            // ignore
-        }
+        // defer the notification to avoid the lock ordering problem. See JENKINS-19446.
+        MasterComputer.threadPoolForRemoting.submit(new java.util.concurrent.Callable<Void>() {
+            @Override
+            public Void call() throws Exception {
+                invokeOnDeleted();
+                Jenkins.getInstance().rebuildDependencyGraphAsync();
+                return null;
+            }
 
-        Jenkins.getInstance().rebuildDependencyGraph();
-    }
-
-    /**
-     * A pointless function to work around what appears to be a HotSpot problem. See JENKINS-5756 and bug 6933067
-     * on BugParade for more details.
-     */
-    private void invokeOnDeleted() throws IOException {
-        getParent().onDeleted(this);
+            /**
+             * A pointless function to work around what appears to be a HotSpot problem. See JENKINS-5756 and bug 6933067
+             * on BugParade for more details.
+             */
+            private void invokeOnDeleted() throws IOException {
+                getParent().onDeleted(AbstractItem.this);
+            }
+        });
     }
 
     /**
@@ -546,7 +553,7 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
         }
         if (req.getMethod().equals("POST")) {
             // submission
-            updateByXml(new StreamSource(req.getReader()));
+            updateByXml((Source)new StreamSource(req.getReader()));
             return;
         }
 
@@ -555,9 +562,18 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
     }
 
     /**
-     * Updates Job by its XML definition.
+     * @deprecated as of 1.473
+     *      Use {@link #updateByXml(Source)}
      */
     public void updateByXml(StreamSource source) throws IOException {
+        updateByXml((Source)source);
+    }
+
+    /**
+     * Updates Job by its XML definition.
+     * @since 1.473
+     */
+    public void updateByXml(Source source) throws IOException {
         checkPermission(CONFIGURE);
         XmlFile configXmlFile = getConfigFile();
         AtomicFileWriter out = new AtomicFileWriter(configXmlFile.getFile());
@@ -572,13 +588,18 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
                         new StreamResult(out));
                 out.close();
             } catch (TransformerException e) {
-                throw new IOException2("Failed to persist configuration.xml", e);
+                throw new IOException("Failed to persist configuration.xml", e);
             }
 
             // try to reflect the changes by reloading
             new XmlFile(Items.XSTREAM, out.getTemporaryFile()).unmarshal(this);
-            onLoad(getParent(), getRootDir().getName());
-            Jenkins.getInstance().rebuildDependencyGraph();
+            Items.updatingByXml.set(true);
+            try {
+                onLoad(getParent(), getRootDir().getName());
+            } finally {
+                Items.updatingByXml.set(false);
+            }
+            Jenkins.getInstance().rebuildDependencyGraphAsync();
 
             // if everything went well, commit this new version
             out.commit();
@@ -587,7 +608,7 @@ public abstract class AbstractItem extends Actionable implements Item, HttpDelet
             out.abort(); // don't leave anything behind
         }
     }
-    
+
 
     /* (non-Javadoc)
      * @see hudson.model.AbstractModelObject#getSearchName()

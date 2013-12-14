@@ -26,7 +26,6 @@ package hudson.model;
 import hudson.model.MultiStageTimeSeries.TimeScale;
 import hudson.model.MultiStageTimeSeries.TrendChart;
 import jenkins.model.Jenkins;
-import jenkins.model.UnlabeldLoadStatistics;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.export.Exported;
@@ -37,11 +36,11 @@ import org.kohsuke.stapler.export.Exported;
  *
  * @author Kohsuke Kawaguchi
  * @see Jenkins#overallLoad
- * @see UnlabeldLoadStatistics
+ * @see jenkins.model.UnlabeledLoadStatistics
  */
 public class OverallLoadStatistics extends LoadStatistics {
     /**
-     * Number of total {@link Queue.BuildableItem}s that represents blocked builds.
+     * Number of total {@link hudson.model.Queue.BuildableItem}s that represents blocked builds.
      *
      * @deprecated as of 1.467
      *      Use {@link #queueLength}. Left as an alias here for backward compatibility.

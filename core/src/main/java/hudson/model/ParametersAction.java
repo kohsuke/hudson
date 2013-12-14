@@ -26,6 +26,7 @@ package hudson.model;
 import hudson.Util;
 import hudson.EnvVars;
 import hudson.diagnosis.OldDataMonitor;
+import hudson.matrix.MatrixChildAction;
 import hudson.model.Queue.QueueAction;
 import hudson.model.labels.LabelAssignmentAction;
 import hudson.model.queue.SubTask;
@@ -43,6 +44,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
+import static com.google.common.collect.Lists.newArrayList;
+import static com.google.common.collect.Sets.newHashSet;
+
 /**
  * Records the parameter values used for a build.
  *
@@ -52,7 +56,7 @@ import java.util.Set;
  * that were specified when scheduling.
  */
 @ExportedBean
-public class ParametersAction implements Action, Iterable<ParameterValue>, QueueAction, EnvironmentContributingAction, LabelAssignmentAction {
+public class ParametersAction implements Action, Iterable<ParameterValue>, QueueAction, EnvironmentContributingAction, LabelAssignmentAction, MatrixChildAction {
 
     private final List<ParameterValue> parameters;
 
@@ -82,7 +86,7 @@ public class ParametersAction implements Action, Iterable<ParameterValue>, Queue
     }
 
     /**
-     * Performs a variable subsitution to the given text and return it.
+     * Performs a variable substitution to the given text and return it.
      */
     public String substitute(AbstractBuild<?,?> build, String text) {
         return Util.replaceMacro(text,createVariableResolver(build));
@@ -156,6 +160,37 @@ public class ParametersAction implements Action, Iterable<ParameterValue>, Queue
             }
             return !params.equals(new HashSet<ParameterValue>(this.parameters));
         }
+    }
+
+    /**
+     * Creates a new {@link ParametersAction} that contains all the parameters in this action
+     * with the overrides / new values given as parameters.
+     */
+    public ParametersAction createUpdated(Collection<? extends ParameterValue> overrides) {
+        if(overrides == null) {
+            return new ParametersAction(parameters);
+        }
+        List<ParameterValue> combinedParameters = newArrayList(overrides);
+        Set<String> names = newHashSet();
+
+        for(ParameterValue v : overrides) {
+            names.add(v.getName());
+        }
+
+        for (ParameterValue v : parameters) {
+            if (!names.contains(v.getName())) {
+                combinedParameters.add(v);
+            }
+        }
+
+        return new ParametersAction(combinedParameters);
+    }
+
+    public ParametersAction merge(ParametersAction overrides) {
+        if(overrides == null) {
+            return new ParametersAction(parameters);
+        }
+        return createUpdated(overrides.getParameters());
     }
 
     private Object readResolve() {

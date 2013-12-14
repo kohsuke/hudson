@@ -5,7 +5,6 @@ import hudson.FilePath;
 import hudson.cli.CLICommand;
 import jenkins.model.Jenkins;
 import hudson.remoting.Callable;
-import hudson.tasks.MailAddressResolver;
 import hudson.util.spring.BeanBuilder;
 import org.acegisecurity.Authentication;
 import org.acegisecurity.AuthenticationException;
@@ -16,7 +15,6 @@ import org.acegisecurity.providers.dao.AbstractUserDetailsAuthenticationProvider
 import org.acegisecurity.userdetails.UserDetails;
 import org.acegisecurity.userdetails.UserDetailsService;
 import org.acegisecurity.userdetails.UsernameNotFoundException;
-import org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement;
 import org.kohsuke.args4j.Option;
 import org.springframework.dao.DataAccessException;
 import org.springframework.web.context.WebApplicationContext;
@@ -93,7 +91,7 @@ public abstract class AbstractPasswordBasedSecurityRealm extends SecurityRealm i
      * return it as a {@link UserDetails} object. {@link org.acegisecurity.userdetails.User} is a convenient
      * implementation to use, but if your backend offers additional data, you may want to use your own subtype
      * so that the rest of Hudson can use those additional information (such as e-mail address --- see
-     * {@link MailAddressResolver}.)
+     * MailAddressResolver.)
      *
      * <p>
      * Properties like {@link UserDetails#getPassword()} make no sense, so just return an empty value from it.
@@ -142,7 +140,6 @@ public abstract class AbstractPasswordBasedSecurityRealm extends SecurityRealm i
      * Asks for the password.
      */
     private static class InteractivelyAskForPassword implements Callable<String,IOException> {
-        @IgnoreJRERequirement
         public String call() throws IOException {
             Console console = System.console();
             if (console == null)    return null;    // no terminal

@@ -24,37 +24,36 @@
 package hudson.util;
 
 import com.thoughtworks.xstream.converters.ConversionException;
-import com.thoughtworks.xstream.converters.SingleValueConverter;
-import com.thoughtworks.xstream.converters.UnmarshallingContext;
 import com.thoughtworks.xstream.converters.Converter;
 import com.thoughtworks.xstream.converters.MarshallingContext;
+import com.thoughtworks.xstream.converters.SingleValueConverter;
+import com.thoughtworks.xstream.converters.UnmarshallingContext;
+import com.thoughtworks.xstream.converters.reflection.MissingFieldException;
+import com.thoughtworks.xstream.converters.reflection.ObjectAccessException;
+import com.thoughtworks.xstream.converters.reflection.PureJavaReflectionProvider;
 import com.thoughtworks.xstream.converters.reflection.ReflectionConverter;
 import com.thoughtworks.xstream.converters.reflection.ReflectionProvider;
 import com.thoughtworks.xstream.converters.reflection.SerializationMethodInvoker;
-import com.thoughtworks.xstream.converters.reflection.ObjectAccessException;
-import com.thoughtworks.xstream.converters.reflection.PureJavaReflectionProvider;
-import com.thoughtworks.xstream.converters.reflection.NonExistentFieldException;
 import com.thoughtworks.xstream.core.util.Primitives;
+import com.thoughtworks.xstream.io.ExtendedHierarchicalStreamWriterHelper;
 import com.thoughtworks.xstream.io.HierarchicalStreamReader;
 import com.thoughtworks.xstream.io.HierarchicalStreamWriter;
-import com.thoughtworks.xstream.io.ExtendedHierarchicalStreamWriterHelper;
-import com.thoughtworks.xstream.mapper.Mapper;
 import com.thoughtworks.xstream.mapper.CannotResolveClassException;
-
+import com.thoughtworks.xstream.mapper.Mapper;
 import hudson.diagnosis.OldDataMonitor;
 import hudson.model.Saveable;
-
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-import java.util.HashSet;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.Set;
+import static java.util.logging.Level.FINE;
 import java.util.logging.Logger;
-
-import static java.util.logging.Level.WARNING;
+import javax.annotation.Nonnull;
 
 /**
  * Custom {@link ReflectionConverter} that handle errors more gracefully.
@@ -73,10 +72,16 @@ public class RobustReflectionConverter implements Converter {
     protected final Mapper mapper;
     protected transient SerializationMethodInvoker serializationMethodInvoker;
     private transient ReflectionProvider pureJavaReflectionProvider;
+    private final @Nonnull XStream2.ClassOwnership classOwnership;
 
     public RobustReflectionConverter(Mapper mapper, ReflectionProvider reflectionProvider) {
+        this(mapper, reflectionProvider, new XStream2().new PluginClassOwnership());
+    }
+    RobustReflectionConverter(Mapper mapper, ReflectionProvider reflectionProvider, XStream2.ClassOwnership classOwnership) {
         this.mapper = mapper;
         this.reflectionProvider = reflectionProvider;
+        assert classOwnership != null;
+        this.classOwnership = classOwnership;
         serializationMethodInvoker = new SerializationMethodInvoker();
     }
 
@@ -91,7 +96,43 @@ public class RobustReflectionConverter implements Converter {
             writer.addAttribute(mapper.aliasForAttribute("resolves-to"), mapper.serializedClass(source.getClass()));
         }
 
-        doMarshal(source, writer, context);
+        OwnerContext oc = OwnerContext.find(context);
+        oc.startVisiting(writer, classOwnership.ownerOf(original.getClass()));
+        try {
+            doMarshal(source, writer, context);
+        } finally {
+            oc.stopVisiting();
+        }
+    }
+
+    /** Marks {@code plugin="..."} on elements where the owner is known and distinct from the closest owned ancestor. */
+    private static class OwnerContext extends LinkedList<String> {
+        static OwnerContext find(MarshallingContext context) {
+            OwnerContext c = (OwnerContext) context.get(OwnerContext.class);
+            if (c == null) {
+                c = new OwnerContext();
+                context.put(OwnerContext.class, c);
+            }
+            return c;
+        }
+        private void startVisiting(HierarchicalStreamWriter writer, String owner) {
+            if (owner != null) {
+                boolean redundant = false;
+                for (String parentOwner : this) {
+                    if (parentOwner != null) {
+                        redundant = parentOwner.equals(owner);
+                        break;
+                    }
+                }
+                if (!redundant) {
+                    writer.addAttribute("plugin", owner);
+                }
+            }
+            addFirst(owner);
+        }
+        private void stopVisiting() {
+            removeFirst();
+        }
     }
 
     protected void doMarshal(final Object source, final HierarchicalStreamWriter writer, final MarshallingContext context) {
@@ -252,14 +293,14 @@ public class RobustReflectionConverter implements Converter {
                         implicitCollectionsForCurrentObject = writeValueToImplicitCollection(context, value, implicitCollectionsForCurrentObject, result, fieldName);
                     }
                 }
-            } catch (NonExistentFieldException e) {
-                LOGGER.log(WARNING,"Skipping a non-existent field "+e.getFieldName(),e);
+            } catch (MissingFieldException e) {
+                LOGGER.log(FINE, "Skipping a non-existent field " + e.getFieldName(), e);
                 addErrorInContext(context, e);
             } catch (CannotResolveClassException e) {
-                LOGGER.log(WARNING,"Skipping a non-existent type",e);
+                LOGGER.log(FINE, "Skipping a non-existent type", e);
                 addErrorInContext(context, e);
             } catch (LinkageError e) {
-                LOGGER.log(WARNING,"Failed to resolve a type",e);
+                LOGGER.log(FINE, "Failed to resolve a type", e);
                 addErrorInContext(context, e);
             }
 

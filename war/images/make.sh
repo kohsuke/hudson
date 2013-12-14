@@ -21,6 +21,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+# this script requires these tools to be installed:
+# * ImageMagick (http://www.imagemagick.org/)
+# * inkscape (http://inkscape.org/)
 
 for src in *.svg
 do
@@ -38,6 +41,12 @@ do
       #   -compose Dst_Over $dst
       # composite -compose Dst_Over -tile xc:white t.png $dst
       # rm t.png
+    fi
+
+    gif=$(echo $dst | sed -e s/.png/.gif/)
+    if [ ! -e $gif -o $dst -nt $gif ];
+    then
+      convert $dst -background white -flatten -transparent white $gif
     fi
   done
 done

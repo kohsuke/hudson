@@ -34,17 +34,24 @@ import java.util.AbstractList;
 
 import javax.servlet.ServletException;
 
+import hudson.Util;
+import hudson.model.Queue.WaitingItem;
 import jenkins.model.Jenkins;
+import jenkins.util.TimeDuration;
 import net.sf.json.JSONArray;
 import net.sf.json.JSONObject;
 
+import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.export.ExportedBean;
 
 import hudson.Extension;
+import javax.annotation.CheckForNull;
 import org.kohsuke.stapler.export.Flavor;
+
+import static javax.servlet.http.HttpServletResponse.SC_CREATED;
 
 /**
  * Keeps a list of the parameters defined for a project.
@@ -100,18 +107,21 @@ public class ParametersDefinitionProperty extends JobProperty<AbstractProject<?,
         return (AbstractProject<?, ?>) owner;
     }
 
+    /** @deprecated use {@link #_doBuild(StaplerRequest, StaplerResponse, TimeDuration)} */
+    @Deprecated
+    public void _doBuild(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        _doBuild(req,rsp,TimeDuration.fromString(req.getParameter("delay")));
+    }
+
     /**
      * Interprets the form submission and schedules a build for a parameterized job.
      *
      * <p>
-     * This method is supposed to be invoked from {@link AbstractProject#doBuild(StaplerRequest, StaplerResponse)}.
+     * This method is supposed to be invoked from {@link AbstractProject#doBuild(StaplerRequest, StaplerResponse, TimeDuration)}.
      */
-    public void _doBuild(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        if(!req.getMethod().equals("POST")) {
-            // show the parameter entry form.
-            req.getView(this,"index.jelly").forward(req,rsp);
-            return;
-        }
+    public void _doBuild(StaplerRequest req, StaplerResponse rsp, @QueryParameter TimeDuration delay) throws IOException, ServletException {
+        if (delay==null)    delay=new TimeDuration(owner.getQuietPeriod());
+
 
         List<ParameterValue> values = new ArrayList<ParameterValue>();
         
@@ -129,14 +139,25 @@ public class ParametersDefinitionProperty extends JobProperty<AbstractProject<?,
             values.add(parameterValue);
         }
 
-    	Jenkins.getInstance().getQueue().schedule(
-                owner, owner.getDelay(req), new ParametersAction(values), new CauseAction(new Cause.UserIdCause()));
-
-        // send the user back to the job top page.
-        rsp.sendRedirect(".");
+    	WaitingItem item = Jenkins.getInstance().getQueue().schedule(
+                owner, delay.getTime(), new ParametersAction(values), new CauseAction(new Cause.UserIdCause()));
+        if (item!=null) {
+            String url = formData.optString("redirectTo");
+            if (url==null || Util.isAbsoluteUri(url))   // avoid open redirect
+                url = req.getContextPath()+'/'+item.getUrl();
+            rsp.sendRedirect(formData.optInt("statusCode",SC_CREATED), url);
+        } else
+            // send the user back to the job top page.
+            rsp.sendRedirect(".");
     }
 
+    /** @deprecated use {@link #buildWithParameters(StaplerRequest, StaplerResponse, TimeDuration)} */
+    @Deprecated
     public void buildWithParameters(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        buildWithParameters(req,rsp,TimeDuration.fromString(req.getParameter("delay")));
+    }
+
+    public void buildWithParameters(StaplerRequest req, StaplerResponse rsp, @CheckForNull TimeDuration delay) throws IOException, ServletException {
         List<ParameterValue> values = new ArrayList<ParameterValue>();
         for (ParameterDefinition d: parameterDefinitions) {
         	ParameterValue value = d.createValue(req);
@@ -144,9 +165,10 @@ public class ParametersDefinitionProperty extends JobProperty<AbstractProject<?,
         		values.add(value);
         	}
         }
+        if (delay==null)    delay=new TimeDuration(owner.getQuietPeriod());
 
         Jenkins.getInstance().getQueue().schedule(
-                owner, owner.getDelay(req), new ParametersAction(values), owner.getBuildCause(req));
+                owner, delay.getTime(), new ParametersAction(values), owner.getBuildCause(req));
 
         if (requestWantsJson(req)) {
             rsp.setContentType("application/json");

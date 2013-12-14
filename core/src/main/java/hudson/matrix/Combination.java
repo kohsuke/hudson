@@ -23,6 +23,7 @@
  */
 package hudson.matrix;
 
+import groovy.lang.Binding;
 import hudson.Util;
 
 import java.util.ArrayList;
@@ -37,10 +38,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
-import static java.lang.Boolean.TRUE;
-
-import groovy.lang.Binding;
-import groovy.lang.GroovyShell;
 
 /**
  * A particular combination of {@link Axis} values.
@@ -84,26 +81,6 @@ public final class Combination extends TreeMap<String,String> implements Compara
     }
 
     /**
-     * Obtains a number N such that "N%M==0" would create
-     * a reasonable sparse matrix for integer M.
-     *
-     * <p>
-     * This is bit like {@link #toIndex(AxisList)}, but instead
-     * of creating a continuous number (which often maps different
-     * values of the same axis to the same index in modulo N residue ring,
-     * we use a prime number P as the base. I think this guarantees the uniform
-     * distribution in any N smaller than 2P (but proof, anyone?)
-     */
-    private long toModuloIndex(AxisList axis) {
-        long r = 0;
-        for (Axis a : axis) {
-            r += a.indexOf(get(a));
-            r *= 31;
-        }
-        return r;
-    }
-
-    /**
      * Evaluates the given Groovy expression with values bound from this combination.
      *
      * <p>
@@ -111,20 +88,17 @@ public final class Combination extends TreeMap<String,String> implements Compara
      * true.
      */
     public boolean evalGroovyExpression(AxisList axes, String expression) {
-        if(Util.fixEmptyAndTrim(expression)==null)
-            return true;
+        return evalGroovyExpression(axes, expression, new Binding());
+    }
 
-        Binding binding = new Binding();
-        for (Map.Entry<String, String> e : entrySet())
-            binding.setVariable(e.getKey(),e.getValue());
-
-        binding.setVariable("index",toModuloIndex(axes));
-        binding.setVariable("uniqueId",toIndex(axes));
-
-        GroovyShell shell = new GroovyShell(binding);
-
-        Object result = shell.evaluate("use("+BooleanCategory.class.getName().replace('$','.')+") {"+expression+"}");
-        return TRUE.equals(result);
+    /**
+     * @see #evalGroovyExpression(AxisList, String)
+     * @since 1.515
+     * @deprecated as of 1.528
+     *      Use {@link FilterScript#apply(hudson.matrix.MatrixBuild.MatrixBuildExecution, Combination)}
+     */
+    public boolean evalGroovyExpression(AxisList axes, String expression, Binding binding) {
+        return FilterScript.parse(expression).apply(axes, this, binding);
     }
 
     public int compareTo(Combination that) {
@@ -222,7 +196,7 @@ public final class Combination extends TreeMap<String,String> implements Compara
     }
 
     /**
-     * Creates compact string representataion suitable for display purpose.
+     * Creates compact string representation suitable for display purpose.
      *
      * <p>
      * The string is made compact by looking for {@link Axis} whose values

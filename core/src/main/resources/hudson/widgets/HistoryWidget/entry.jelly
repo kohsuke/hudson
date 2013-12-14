@@ -31,11 +31,11 @@ THE SOFTWARE.
   <j:set var="transitive" value="${(it.firstTransientBuildKey!=null and (it.adapter.compare(build,it.firstTransientBuildKey) ge 0)) ? 'transitive' : null}" />
   <tr class="build-row no-wrap ${transitive}">
     <td>
-      <a href="${link}console"><img width="16" height="16" src="${imagesURL}/16x16/${build.buildStatusUrl}" alt="${build.iconColor.description} &gt; ${%Console Output}" tooltip="${build.iconColor.description} &gt; ${%Console Output}" /></a><st:nbsp/>
+      <a class="build-status-link" href="${link}console"><img class="build-status-icon" width="16" height="16" src="${imagesURL}/16x16/${build.buildStatusUrl}" alt="${build.iconColor.description} &gt; ${%Console Output}" tooltip="${build.iconColor.description} &gt; ${%Console Output}" /></a><st:nbsp/>
       ${build.displayName}
     </td>
     <td style="padding-right:0">
-      <a class="tip model-link tl-tr" href="${link}">
+      <a class="tip model-link inside" href="${link}">
         <i:formatDate value="${build.timestamp.time}" type="both" dateStyle="medium" timeStyle="medium"/>
       </a>
     </td>
@@ -51,14 +51,14 @@ THE SOFTWARE.
   </tr>
   <j:if test="${build.building}">
     <j:set target="${it}" property="nextBuildNumberToFetch" value="${build.number}"/>
-    <tr class="transitive"><td></td><td colspan="2" style="padding:0">
+    <tr class="transitive build-progress-bar"><td></td><td colspan="2" style="padding:0">
       <table class="middle-align">
         <tr><td>
           <t:buildProgressBar build="${build}"/>
         </td><td style="padding:0">
           <!-- Check ABORT permission for Project, Admin permission otherwise -->
           <j:if test="${empty(it.owner.ABORT) ? h.hasPermission(app.ADMINISTER) : it.owner.hasPermission(it.owner.ABORT)}">
-            <a href="${link}stop"><img src="${imagesURL}/16x16/stop.png" alt="[cancel]" height="16" width="16"/></a>
+            <l:stopButton href="${link}stop" alt="[cancel]"/>
           </j:if>
         </td></tr>
       </table>
@@ -68,7 +68,7 @@ THE SOFTWARE.
     <tr class="${transitive}">
       <td></td>
       <td colspan="2" class="desc">
-        <j:out value="${build.truncatedDescription}"/>
+        <j:out value="${app.markupFormatter.translate(build.truncatedDescription)}"/>
       </td>
     </tr>
   </j:if>

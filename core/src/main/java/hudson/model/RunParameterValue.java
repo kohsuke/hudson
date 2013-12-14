@@ -1,7 +1,7 @@
 /*
  * The MIT License
  * 
- * Copyright (c) 2004-2009, Sun Microsystems, Inc., Kohsuke Kawaguchi, Tom Huybrechts
+ * Copyright (c) 2004-2009, Sun Microsystems, Inc., Kohsuke Kawaguchi, Tom Huybrechts, Geoff Cummings
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -69,17 +69,33 @@ public class RunParameterValue extends ParameterValue {
      */
     @Override
     public void buildEnvVars(AbstractBuild<?,?> build, EnvVars env) {
-        String value = Jenkins.getInstance().getRootUrl() + getRun().getUrl();
+        Run run = getRun();
+        
+        String value = Jenkins.getInstance().getRootUrl() + run.getUrl();
         env.put(name, value);
-        env.put(name + ".jobName", getJobName());
-        env.put(name + ".number" , getNumber ());
+
+        env.put(name + ".jobName", getJobName());   // undocumented, left for backward compatibility
+        env.put(name + "_JOBNAME", getJobName());   // prefer this version
+
+        env.put(name + ".number" , getNumber ());   // same as above
+        env.put(name + "_NUMBER" , getNumber ());
+        
+        env.put(name + "_NAME",  run.getDisplayName());  // since 1.504
+
+        String buildResult = (null == run.getResult()) ? "UNKNOWN" : run.getResult().toString();
+        env.put(name + "_RESULT",  buildResult);  // since 1.517
+
         env.put(name.toUpperCase(Locale.ENGLISH),value); // backward compatibility pre 1.345
 
     }
     
     @Override
-    public String getShortDescription() {
+    public String toString() {
     	return "(RunParameterValue) " + getName() + "='" + getRunId() + "'";
+    }
+
+    @Override public String getShortDescription() {
+        return name + "=" + getRun().getFullDisplayName();
     }
 
 }

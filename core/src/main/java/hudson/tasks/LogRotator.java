@@ -23,32 +23,33 @@
  */
 package hudson.tasks;
 
-import hudson.model.Describable;
-import hudson.model.Descriptor;
+import com.google.common.collect.Lists;
+import hudson.Extension;
 import hudson.model.Job;
 import hudson.model.Run;
-
+import jenkins.model.BuildDiscarder;
+import jenkins.model.BuildDiscarderDescriptor;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import java.io.IOException;
 import java.util.Calendar;
+import java.util.Collection;
 import java.util.GregorianCalendar;
-import static java.util.logging.Level.FINE;
-import static java.util.logging.Level.FINER;
-
 import java.util.List;
 import java.util.logging.Logger;
 
+import static java.util.logging.Level.*;
+
 /**
- * Deletes old builds.
- * 
- * Historically this is called LogRotator, though it deletes the whole build including all artifacts.
+ * Default implementation of {@link BuildDiscarder}.
+ *
+ * For historical reason, this is called LogRotator, but it does not rotate logs :-)
  * 
  * Since 1.350 it has also the option to keep the build, but delete its recorded artifacts.
  * 
  * @author Kohsuke Kawaguchi
  */
-public class LogRotator implements Describable<LogRotator> {
+public class LogRotator extends BuildDiscarder {
 
     /**
      * If not -1, history is only kept up to this days.
@@ -75,9 +76,9 @@ public class LogRotator implements Describable<LogRotator> {
     private final Integer artifactNumToKeep;
 
     @DataBoundConstructor
-    public LogRotator (String logrotate_days, String logrotate_nums, String logrotate_artifact_days, String logrotate_artifact_nums) {
-        this (parse(logrotate_days),parse(logrotate_nums),
-              parse(logrotate_artifact_days),parse(logrotate_artifact_nums));
+    public LogRotator (String daysToKeepStr, String numToKeepStr, String artifactDaysToKeepStr, String artifactNumToKeepStr) {
+        this (parse(daysToKeepStr),parse(numToKeepStr),
+              parse(artifactDaysToKeepStr),parse(artifactNumToKeepStr));
     }
 
     public static int parse(String p) {
@@ -107,7 +108,7 @@ public class LogRotator implements Describable<LogRotator> {
 
     @SuppressWarnings("rawtypes")
     public void perform(Job<?,?> job) throws IOException, InterruptedException {
-        LOGGER.log(FINE,"Running the log rotation for "+job.getFullDisplayName());
+        LOGGER.log(FINE, "Running the log rotation for {0}", job);
         
         // always keep the last successful and the last stable builds
         Run lsb = job.getLastSuccessfulBuild();
@@ -115,20 +116,11 @@ public class LogRotator implements Describable<LogRotator> {
 
         if(numToKeep!=-1) {
             List<? extends Run<?,?>> builds = job.getBuilds();
-            for (Run r : builds.subList(Math.min(builds.size(),numToKeep),builds.size())) {
-                if (r.isKeepLog()) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's marked as a keeper");
+            for (Run r : copy(builds.subList(Math.min(builds.size(), numToKeep), builds.size()))) {
+                if (shouldKeepRun(r, lsb, lstb, null)) {
                     continue;
                 }
-                if (r==lsb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's the last successful build");
-                    continue;
-                }
-                if (r==lstb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's the last stable build");
-                    continue;
-                }
-                LOGGER.log(FINER,r.getFullDisplayName()+" is to be removed");
+                LOGGER.log(FINE, "{0} is to be removed", r);
                 r.delete();
             }
         }
@@ -136,43 +128,22 @@ public class LogRotator implements Describable<LogRotator> {
         if(daysToKeep!=-1) {
             Calendar cal = new GregorianCalendar();
             cal.add(Calendar.DAY_OF_YEAR,-daysToKeep);
-            for( Run r : job.getBuilds() ) {
-                if (r.isKeepLog()) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's marked as a keeper");
+            for( Run r : copy(job.getBuilds()) ) {
+                if (shouldKeepRun(r, lsb, lstb, cal)) {
                     continue;
                 }
-                if (r==lsb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's the last successful build");
-                    continue;
-                }
-                if (r==lstb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's the last stable build");
-                    continue;
-                }
-                if (!r.getTimestamp().before(cal)) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not GC-ed because it's still new");
-                    continue;
-                }
-                LOGGER.log(FINER,r.getFullDisplayName()+" is to be removed");
+                LOGGER.log(FINE, "{0} is to be removed", r);
                 r.delete();
             }
         }
 
         if(artifactNumToKeep!=null && artifactNumToKeep!=-1) {
             List<? extends Run<?,?>> builds = job.getBuilds();
-            for (Run r : builds.subList(Math.min(builds.size(),artifactNumToKeep),builds.size())) {
-                if (r.isKeepLog()) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's marked as a keeper");
+            for (Run r : copy(builds.subList(Math.min(builds.size(), artifactNumToKeep), builds.size()))) {
+                if (shouldKeepRun(r, lsb, lstb, null)) {
                     continue;
                 }
-                if (r==lsb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's the last successful build");
-                    continue;
-                }
-                if (r==lstb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's the last stable build");
-                    continue;
-                }
+                LOGGER.log(FINE, "{0} is to be purged of artifacts", r);
                 r.deleteArtifacts();
             }
         }
@@ -180,27 +151,41 @@ public class LogRotator implements Describable<LogRotator> {
         if(artifactDaysToKeep!=null && artifactDaysToKeep!=-1) {
             Calendar cal = new GregorianCalendar();
             cal.add(Calendar.DAY_OF_YEAR,-artifactDaysToKeep);
-            for( Run r : job.getBuilds() ) {
-                if (r.isKeepLog()) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's marked as a keeper");
+            for( Run r : copy(job.getBuilds())) {
+                if (shouldKeepRun(r, lsb, lstb, cal)) {
                     continue;
                 }
-                if (r==lsb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's the last successful build");
-                    continue;
-                }
-                if (r==lstb) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's the last stable build");
-                    continue;
-                }
-                if (!r.getTimestamp().before(cal)) {
-                    LOGGER.log(FINER,r.getFullDisplayName()+" is not purged of artifacts because it's still new");
-                    continue;
-                }
+                LOGGER.log(FINE, "{0} is to be purged of artifacts", r);
                 r.deleteArtifacts();
             }
         }
+    }
 
+    private boolean shouldKeepRun(Run r, Run lsb, Run lstb, Calendar cal) {
+        if (r.isKeepLog()) {
+            LOGGER.log(FINER, "{0} is not to be removed or purged of artifacts because it’s marked as a keeper", r);
+            return true;
+        }
+        if (r == lsb) {
+            LOGGER.log(FINER, "{0} is not to be removed or purged of artifacts because it’s the last successful build", r);
+            return true;
+        }
+        if (r == lstb) {
+            LOGGER.log(FINER, "{0} is not to be removed or purged of artifacts because it’s the last stable build", r);
+            return true;
+        }
+        if (cal != null && !r.getTimestamp().before(cal)) {
+            LOGGER.log(FINER, "{0} is not to be removed or purged of artifacts because it’s still new", r);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Creates a copy since we'll be deleting some entries from them.
+     */
+    private <R> Collection<R> copy(Iterable<R> src) {
+        return Lists.newArrayList(src);
     }
 
     public int getDaysToKeep() {
@@ -244,14 +229,8 @@ public class LogRotator implements Describable<LogRotator> {
         return String.valueOf(i);
     }
 
-
-    public LRDescriptor getDescriptor() {
-        return DESCRIPTOR;
-    }
-
-    public static final LRDescriptor DESCRIPTOR = new LRDescriptor();
-
-    public static final class LRDescriptor extends Descriptor<LogRotator> {
+    @Extension
+    public static final class LRDescriptor extends BuildDiscarderDescriptor {
         public String getDisplayName() {
             return "Log Rotation";
         }

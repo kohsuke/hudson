@@ -45,7 +45,7 @@ public final class WorkUnitContext {
     public final Task task;
 
     /**
-     * Once the execution is complete, update this future object with the outcome.
+     * Once the execution starts and completes, update this future object with the outcome.
      */
     public final FutureImpl future;
 
@@ -91,7 +91,10 @@ public final class WorkUnitContext {
      * to create its {@link WorkUnit}.
      */
     public WorkUnit createWorkUnit(SubTask execUnit) {
-        future.addExecutor(Executor.currentExecutor());
+        Executor executor = Executor.currentExecutor();
+        if (executor != null) { // TODO is it legal for this to be called by a non-executor thread?
+            future.addExecutor(executor);
+        }
         WorkUnit wu = new WorkUnit(this, execUnit);
         workUnits.add(wu);
         return wu;
@@ -110,6 +113,12 @@ public final class WorkUnitContext {
      */
     public void synchronizeStart() throws InterruptedException {
         startLatch.synchronize();
+        // the main thread will send a notification
+        Executor e = Executor.currentExecutor();
+        WorkUnit wu = e.getCurrentWorkUnit();
+        if (wu.isMainWork()) {
+            future.start.set(e.getCurrentExecutable());
+        }
     }
 
     /**

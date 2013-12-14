@@ -44,9 +44,7 @@ public class MatrixTest extends HudsonTestCase {
         MatrixProject mp = new MatrixProject("matrix test");
         MatrixConfiguration mc = new MatrixConfiguration(mp, Combination.fromString("foo bar=baz bat"));
         assertEquals("job/matrix%20test/", mp.getUrl());
-        assertTrue("Invalid: " + mc.getUrl(),
-                   "job/matrix%20test/foo%20bar=baz%20bat/".equals(mc.getUrl())
-                   || "job/matrix%20test/./foo%20bar=baz%20bat/".equals(mc.getUrl()));
+        assertEquals("job/matrix%20test/foo%20bar=baz%20bat/", mc.getUrl());
     }
     
     /**
@@ -54,7 +52,7 @@ public class MatrixTest extends HudsonTestCase {
      */
     @Bug(9293)
     public void testConfigurationACL() throws Exception {
-        hudson.setAuthorizationStrategy(new ProjectMatrixAuthorizationStrategy());
+        jenkins.setAuthorizationStrategy(new ProjectMatrixAuthorizationStrategy());
         MatrixProject mp = createMatrixProject();
         mp.setAxes(new AxisList(new Axis("foo", "a", "b")));
         MatrixConfiguration mc = mp.getItem("foo=a");

@@ -24,10 +24,12 @@
  */
 package hudson.model;
 
+import jenkins.model.DependencyDeclarer;
 import com.google.common.collect.ImmutableList;
 import hudson.security.ACL;
-import hudson.security.NotSerilizableSecurityContext;
 import jenkins.model.Jenkins;
+import jenkins.util.DirectedGraph;
+import jenkins.util.DirectedGraph.SCC;
 import org.acegisecurity.context.SecurityContext;
 import org.acegisecurity.context.SecurityContextHolder;
 
@@ -75,6 +77,9 @@ public class DependencyGraph implements Comparator<AbstractProject> {
 
     private boolean built;
 
+    private Comparator<AbstractProject<?,?>> topologicalOrder;
+    private List<AbstractProject<?,?>> topologicallySorted;
+
     /**
      * Builds the dependency graph.
      */
@@ -83,7 +88,6 @@ public class DependencyGraph implements Comparator<AbstractProject> {
     
     public void build() {
         // Set full privileges while computing to avoid missing any projects the current user cannot see.
-        // Use setContext (NOT getContext().setAuthentication()) so we don't affect concurrent threads for same HttpSession.
         SecurityContext saveCtx = ACL.impersonate(ACL.SYSTEM);
         try {
             this.computationalData = new HashMap<Class<?>, Object>();
@@ -92,14 +96,57 @@ public class DependencyGraph implements Comparator<AbstractProject> {
 
             forward = finalize(forward);
             backward = finalize(backward);
-
+            topologicalDagSort();
             this.computationalData = null;
             built = true;
         } finally {
             SecurityContextHolder.setContext(saveCtx);
         }
     }
-    
+
+    /**
+     *
+     *
+     * See http://en.wikipedia.org/wiki/Tarjan's_strongly_connected_components_algorithm
+     */
+    private void topologicalDagSort() {
+        DirectedGraph<AbstractProject> g = new DirectedGraph<AbstractProject>() {
+            @Override
+            protected Collection<AbstractProject> nodes() {
+                final Set<AbstractProject> nodes = new HashSet<AbstractProject>();
+                nodes.addAll(forward.keySet());
+                nodes.addAll(backward.keySet());
+                return nodes;
+            }
+
+            @Override
+            protected Collection<AbstractProject> forward(AbstractProject node) {
+                return getDownstream(node);
+            }
+        };
+
+        List<SCC<AbstractProject>> sccs = g.getStronglyConnectedComponents();
+
+        final Map<AbstractProject,Integer> topoOrder = new HashMap<AbstractProject,Integer>();
+        topologicallySorted = new ArrayList<AbstractProject<?,?>>();
+        int idx=0;
+        for (SCC<AbstractProject> scc : sccs) {
+            for (AbstractProject n : scc) {
+                topoOrder.put(n,idx++);
+                topologicallySorted.add(n);
+            }
+        }
+
+        topologicalOrder = new Comparator<AbstractProject<?, ?>>() {
+            @Override
+            public int compare(AbstractProject<?,?> o1, AbstractProject<?,?> o2) {
+                return topoOrder.get(o1)-topoOrder.get(o2);
+            }
+        };
+
+        topologicallySorted = Collections.unmodifiableList(topologicallySorted);
+    }
+
     Collection<AbstractProject> getAllProjects() {
         return Jenkins.getInstance().getAllItems(AbstractProject.class);
     }
@@ -109,6 +156,7 @@ public class DependencyGraph implements Comparator<AbstractProject> {
      */
     private DependencyGraph(boolean dummy) {
         forward = backward = Collections.emptyMap();
+        topologicalDagSort();
         built = true;
     }
 
@@ -200,7 +248,7 @@ public class DependencyGraph implements Comparator<AbstractProject> {
         if(built)
             throw new IllegalStateException();
         add(forward,dep.getUpstreamProject(),dep);
-        add(backward,dep.getDownstreamProject(),dep);
+        add(backward, dep.getDownstreamProject(), dep);
     }
 
     /**
@@ -222,12 +270,12 @@ public class DependencyGraph implements Comparator<AbstractProject> {
     }
 
     /**
-     * Lists up {@link DependecyDeclarer} from the collection and let them builds dependencies.
+     * Lists up {@link DependencyDeclarer} from the collection and let them builds dependencies.
      */
     public void addDependencyDeclarers(AbstractProject upstream, Collection<?> possibleDependecyDeclarers) {
         for (Object o : possibleDependecyDeclarers) {
-            if (o instanceof DependecyDeclarer) {
-                DependecyDeclarer dd = (DependecyDeclarer) o;
+            if (o instanceof DependencyDeclarer) {
+                DependencyDeclarer dd = (DependencyDeclarer) o;
                 dd.buildDependencyGraph(upstream,this);
             }
         }
@@ -325,16 +373,22 @@ public class DependencyGraph implements Comparator<AbstractProject> {
     public static final DependencyGraph EMPTY = new DependencyGraph(false);
 
     /**
-     * Compare to Projects based on the topological order defined by this Dependency Graph
+     * Compare two Projects based on the topological order defined by this Dependency Graph
      */
     public int compare(AbstractProject o1, AbstractProject o2) {
-        Set<AbstractProject> o1sdownstreams = getTransitiveDownstream(o1);
-        Set<AbstractProject> o2sdownstreams = getTransitiveDownstream(o2);
-        if (o1sdownstreams.contains(o2)) {
-            if (o2sdownstreams.contains(o1)) return 0; else return 1;
-        } else {
-            if (o2sdownstreams.contains(o1)) return -1; else return 0;
-        }
+        return topologicalOrder.compare(o1,o2);
+    }
+
+    /**
+     * Returns all the projects in the topological order of the dependency.
+     *
+     * Intuitively speaking, the first one in the list is the source of the dependency graph,
+     * and the last one is the sink.
+     *
+     * @since 1.521
+     */
+    public List<AbstractProject<?,?>> getTopologicallySorted() {
+        return topologicallySorted;
     }
 
     /**

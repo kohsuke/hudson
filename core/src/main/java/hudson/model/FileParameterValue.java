@@ -59,13 +59,16 @@ import org.kohsuke.stapler.StaplerResponse;
  * @author Kohsuke Kawaguchi
  */
 public class FileParameterValue extends ParameterValue {
-    private final FileItem file;
+    private transient final FileItem file;
 
     /**
      * The name of the originally uploaded file.
      */
     private final String originalFileName;
 
+    /**
+     * Overrides the location in the build to place this file. Initially set to {@link #getName()}
+     */
     private String location;
 
     @DataBoundConstructor
@@ -77,17 +80,21 @@ public class FileParameterValue extends ParameterValue {
         this(name, new FileItemImpl(file), originalFileName);
     }
 
-    private FileParameterValue(String name, FileItem file, String originalFileName) {
+    protected FileParameterValue(String name, FileItem file, String originalFileName) {
         super(name);
         this.file = file;
         this.originalFileName = originalFileName;
+        setLocation(name);
     }
 
     // post initialization hook
-    /*package*/ void setLocation(String location) {
+    protected void setLocation(String location) {
         this.location = location;
     }
 
+    public String getLocation() {
+        return location;
+    }
 
     /**
      * Exposes the originalFileName as an environment variable.
@@ -117,12 +124,16 @@ public class FileParameterValue extends ParameterValue {
         return originalFileName;
     }
 
+    public FileItem getFile() {
+        return file;
+    }
+
     @Override
     public BuildWrapper createBuildWrapper(AbstractBuild<?,?> build) {
         return new BuildWrapper() {
             @Override
             public Environment setUp(AbstractBuild build, Launcher launcher, BuildListener listener) throws IOException, InterruptedException {
-            	if (!StringUtils.isEmpty(file.getName())) {
+            	if (!StringUtils.isEmpty(location)) {
             	    listener.getLogger().println("Copying file to "+location);
                     FilePath locationFilePath = build.getWorkspace().child(location);
                     locationFilePath.getParent().mkdirs();
@@ -164,8 +175,12 @@ public class FileParameterValue extends ParameterValue {
 	}
 
     @Override
-    public String getShortDescription() {
+    public String toString() {
     	return "(FileParameterValue) " + getName() + "='" + originalFileName + "'";
+    }
+
+    @Override public String getShortDescription() {
+        return name + "=" + originalFileName;
     }
 
     /**

@@ -32,6 +32,7 @@ import hudson.Util;
 import static hudson.Util.fixNull;
 import hudson.model.BuildListener;
 import hudson.model.Fingerprint.RangeSet;
+import hudson.model.ItemGroup;
 import jenkins.model.Jenkins;
 import hudson.model.Item;
 import hudson.model.Job;
@@ -86,7 +87,7 @@ public class AggregatedTestResultPublisher extends Recorder {
 
     public boolean perform(AbstractBuild<?,?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
         // add a TestResult just so that it can show up later.
-        build.addAction(new TestResultAction(jobs,includeFailedBuilds,build));
+        build.addAction(new TestResultAction(jobs, includeFailedBuilds));
         return true;
     }
 
@@ -130,6 +131,11 @@ public class AggregatedTestResultPublisher extends Recorder {
         private transient List<AbstractProject> didntRun;
         private transient List<AbstractProject> noFingerprints;
 
+        public TestResultAction(String jobs, boolean includeFailedBuilds) {
+            this(jobs, includeFailedBuilds, null);
+        }
+
+        @Deprecated
         public TestResultAction(String jobs, boolean includeFailedBuilds, AbstractBuild<?,?> owner) {
             super(owner);
             this.includeFailedBuilds = includeFailedBuilds;
@@ -351,19 +357,9 @@ public class AggregatedTestResultPublisher extends Recorder {
                 return new AggregatedTestResultPublisher(s.getString("jobs"), req.getParameter("includeFailedBuilds") != null);
         }
 
-        public AutoCompletionCandidates doAutoCompleteJobs(@QueryParameter String value) {
-            AutoCompletionCandidates candidates = new AutoCompletionCandidates();
-            List<Job> jobs = Jenkins.getInstance().getItems(Job.class);
-            for (Job job: jobs) {
-                if (job.getFullName().startsWith(value)) {
-                    if (job.hasPermission(Item.READ)) {
-                        candidates.add(job.getFullName());
-                    }
-                }
-            }
-            return candidates;
+        public AutoCompletionCandidates doAutoCompleteJobs(@QueryParameter String value, @AncestorInPath Item self, @AncestorInPath ItemGroup container) {
+            return AutoCompletionCandidates.ofJobNames(Job.class,value,self,container);
         }
-
     }
 
 }

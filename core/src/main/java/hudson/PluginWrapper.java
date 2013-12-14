@@ -26,6 +26,7 @@ package hudson;
 
 import hudson.PluginManager.PluginInstanceStore;
 import hudson.model.Api;
+import hudson.model.ModelObject;
 import jenkins.YesNoMaybe;
 import jenkins.model.Jenkins;
 import hudson.model.UpdateCenter;
@@ -49,9 +50,12 @@ import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.HttpResponses;
 import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.export.ExportedBean;
+import org.kohsuke.stapler.interceptor.RequirePOST;
 
 import java.util.Enumeration;
 import java.util.jar.JarFile;
+import java.util.logging.Level;
+import javax.annotation.CheckForNull;
 
 /**
  * Represents a Jenkins plug-in and associated control information
@@ -76,7 +80,7 @@ import java.util.jar.JarFile;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public class PluginWrapper implements Comparable<PluginWrapper> {
+public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
     /**
      * {@link PluginManager} to which this belongs to.
      */
@@ -115,6 +119,11 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
      * @since 1.325
      */
     private final File pinFile;
+
+    /**
+     * A .jpi file, an exploded plugin directory, or a .jpl file.
+     */
+    private final File archive;
 
     /**
      * Short name of the plugin. The artifact Id of the plugin.
@@ -200,6 +209,11 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
 		this.active = !disableFile.exists();
 		this.dependencies = dependencies;
 		this.optionalDependencies = optionalDependencies;
+        this.archive = archive;
+    }
+
+    public String getDisplayName() {
+        return getLongName();
     }
 
     public Api getApi() {
@@ -271,8 +285,9 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
     /**
      * Gets the instance of {@link Plugin} contributed by this plugin.
      */
-    public Plugin getPlugin() {
-        return Jenkins.lookup(PluginInstanceStore.class).store.get(this);
+    public @CheckForNull Plugin getPlugin() {
+        PluginInstanceStore pis = Jenkins.lookup(PluginInstanceStore.class);
+        return pis != null ? pis.store.get(this) : null;
     }
 
     /**
@@ -360,11 +375,16 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
      * Terminates the plugin.
      */
     public void stop() {
-        LOGGER.info("Stopping "+shortName);
-        try {
-            getPlugin().stop();
-        } catch(Throwable t) {
-            LOGGER.log(WARNING, "Failed to shut down "+shortName, t);
+        Plugin plugin = getPlugin();
+        if (plugin != null) {
+            try {
+                LOGGER.log(Level.FINE, "Stopping {0}", shortName);
+                plugin.stop();
+            } catch (Throwable t) {
+                LOGGER.log(WARNING, "Failed to shut down " + shortName, t);
+            }
+        } else {
+            LOGGER.log(Level.FINE, "Could not find Plugin instance to stop for {0}", shortName);
         }
         // Work around a bug in commons-logging.
         // See http://www.szegedi.org/articles/memleak.html
@@ -475,7 +495,7 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
 
     /**
      * If the plugin has {@link #getUpdateInfo() an update},
-     * returns the {@link UpdateSite.Plugin} object.
+     * returns the {@link hudson.model.UpdateSite.Plugin} object.
      *
      * @return
      *      This method may return null &mdash; for example,
@@ -489,7 +509,7 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
     }
     
     /**
-     * returns the {@link UpdateSite.Plugin} object, or null.
+     * returns the {@link hudson.model.UpdateSite.Plugin} object, or null.
      */
     public UpdateSite.Plugin getInfo() {
         UpdateCenter uc = Jenkins.getInstance().getUpdateCenter();
@@ -511,6 +531,16 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
     @Exported
     public boolean isPinned() {
         return pinFile.exists();
+    }
+
+    /**
+     * Returns true if this plugin is deleted.
+     *
+     * The plugin continues to function in this session, but in the next session it'll disappear.
+     */
+    @Exported
+    public boolean isDeleted() {
+        return !archive.exists();
     }
 
     /**
@@ -545,7 +575,11 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
         if (backup.exists()) {
             try {
                 JarFile backupPlugin = new JarFile(backup);
-                return backupPlugin.getManifest().getMainAttributes().getValue("Plugin-Version");
+                try {
+                    return backupPlugin.getManifest().getMainAttributes().getValue("Plugin-Version");
+                } finally {
+                    backupPlugin.close();
+                }
             } catch (IOException e) {
                 LOGGER.log(WARNING, "Failed to get backup version ", e);
                 return null;
@@ -559,28 +593,39 @@ public class PluginWrapper implements Comparable<PluginWrapper> {
 // Action methods
 //
 //
+    @RequirePOST
     public HttpResponse doMakeEnabled() throws IOException {
         Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
         enable();
         return HttpResponses.ok();
     }
 
+    @RequirePOST
     public HttpResponse doMakeDisabled() throws IOException {
         Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
         disable();
         return HttpResponses.ok();
     }
 
+    @RequirePOST
     public HttpResponse doPin() throws IOException {
         Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
         new FileOutputStream(pinFile).close();
         return HttpResponses.ok();
     }
 
+    @RequirePOST
     public HttpResponse doUnpin() throws IOException {
         Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
         pinFile.delete();
         return HttpResponses.ok();
+    }
+
+    @RequirePOST
+    public HttpResponse doDoUninstall() throws IOException {
+        Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
+        archive.delete();
+        return HttpResponses.redirectViaContextPath("/pluginManager/installed");   // send back to plugin manager
     }
 
 

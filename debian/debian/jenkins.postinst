@@ -30,6 +30,7 @@ case "$1" in
         if ! id $JENKINS_USER > /dev/null 2>&1 ; then
             adduser --system --home /var/lib/jenkins --no-create-home \
                 --ingroup nogroup --disabled-password --shell /bin/bash \
+                --gecos 'Jenkins' \
                 $JENKINS_USER
         fi
 	
@@ -51,10 +52,16 @@ case "$1" in
         chmod u+rwx /var/lib/jenkins /var/log/jenkins
 
         # make sure jenkins can delete everything in /var/cache/jenkins to
-        # re-explode war. older installations may use /var/run/jenkins
+        # re-explode war.
+        chown -R $JENKINS_USER:adm /var/cache/jenkins
+        chmod -R 750               /var/cache/jenkins
+
+        # older installations may use /var/run/jenkins
         # so make sure that they can delete too.
-        chown -R $JENKINS_USER:adm /var/cache/jenkins /var/run/jenkins
-        chmod -R 750               /var/cache/jenkins /var/run/jenkins
+        if test -d /var/run/jenkins ; then
+            chown -R $JENKINS_USER:adm /var/run/jenkins
+            chmod -R 750               /var/run/jenkins
+        fi
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

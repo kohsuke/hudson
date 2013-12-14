@@ -63,12 +63,12 @@ public enum BallColor implements StatusIcon {
     GREY("grey",Messages._BallColor_Pending(), ColorPalette.GREY),
     GREY_ANIME("grey_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
 
-    DISABLED("grey",Messages._BallColor_Disabled(), ColorPalette.GREY),
-    DISABLED_ANIME("grey_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
-    ABORTED("grey",Messages._BallColor_Aborted(), ColorPalette.GREY),
-    ABORTED_ANIME("grey_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
-    NOTBUILT("grey",Messages._BallColor_NotBuilt(), ColorPalette.GREY),
-    NOTBUILT_ANIME("grey_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
+    DISABLED("disabled",Messages._BallColor_Disabled(), ColorPalette.GREY),
+    DISABLED_ANIME("disabled_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
+    ABORTED("aborted",Messages._BallColor_Aborted(), ColorPalette.GREY),
+    ABORTED_ANIME("aborted_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
+    NOTBUILT("nobuilt",Messages._BallColor_NotBuilt(), ColorPalette.GREY),
+    NOTBUILT_ANIME("nobuilt_anime",Messages._BallColor_InProgress(), ColorPalette.GREY),
     ;
 
     private final Localizable description;
@@ -135,7 +135,7 @@ public enum BallColor implements StatusIcon {
      * Gets the unanimated version.
      */
     public BallColor noAnime() {
-        if(isAnimated())   return valueOf(name().substring(0,name().length()-6));
+        if(isAnimated())   return valueOf(name().substring(0,name().length()-"_ANIME".length()));
         else               return this;
     }
 

@@ -41,6 +41,9 @@ import com.thoughtworks.xstream.io.HierarchicalStreamDriver;
 import com.thoughtworks.xstream.io.HierarchicalStreamReader;
 import com.thoughtworks.xstream.io.HierarchicalStreamWriter;
 import com.thoughtworks.xstream.mapper.CannotResolveClassException;
+import edu.umd.cs.findbugs.annotations.SuppressWarnings;
+import hudson.PluginManager;
+import hudson.PluginWrapper;
 import hudson.diagnosis.OldDataMonitor;
 import hudson.util.xstream.ImmutableSetConverter;
 import hudson.util.xstream.ImmutableSortedSetConverter;
@@ -51,20 +54,26 @@ import hudson.model.Saveable;
 import hudson.util.xstream.ImmutableListConverter;
 import hudson.util.xstream.ImmutableMapConverter;
 import hudson.util.xstream.MapperDelegate;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.Charset;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.annotation.CheckForNull;
 
 /**
  * {@link XStream} enhanced for additional Java5 support and improved robustness.
  * @author Kohsuke Kawaguchi
  */
 public class XStream2 extends XStream {
-    private Converter reflectionConverter;
+    private RobustReflectionConverter reflectionConverter;
     private final ThreadLocal<Boolean> oldData = new ThreadLocal<Boolean>();
-
+    private final @CheckForNull ClassOwnership classOwnership;
     private final Map<String,Class<?>> compatibilityAliases = new ConcurrentHashMap<String, Class<?>>();
 
     /**
@@ -74,11 +83,18 @@ public class XStream2 extends XStream {
 
     public XStream2() {
         init();
+        classOwnership = null;
     }
 
     public XStream2(HierarchicalStreamDriver hierarchicalStreamDriver) {
         super(hierarchicalStreamDriver);
         init();
+        classOwnership = null;
+    }
+
+    XStream2(ClassOwnership classOwnership) {
+        init();
+        this.classOwnership = classOwnership;
     }
 
     @Override
@@ -101,8 +117,13 @@ public class XStream2 extends XStream {
     @Override
     protected Converter createDefaultConverter() {
         // replace default reflection converter
-        reflectionConverter = new RobustReflectionConverter(getMapper(),new JVM().bestReflectionProvider());
+        reflectionConverter = new RobustReflectionConverter(getMapper(),new JVM().bestReflectionProvider(), new PluginClassOwnership());
         return reflectionConverter;
+    }
+
+    static String trimVersion(String version) {
+        // TODO seems like there should be some trick with VersionNumber to do this
+        return version.replaceFirst(" .+$", "");
     }
 
     private void init() {
@@ -137,7 +158,8 @@ public class XStream2 extends XStream {
                     return super.serializedClass(type);
             }
         });
-        AnnotationMapper a = new AnnotationMapper(m, getConverterRegistry(), getClassLoader(), getReflectionProvider(), getJvm());
+        AnnotationMapper a = new AnnotationMapper(m, getConverterRegistry(), getConverterLookup(), getClassLoader(), getReflectionProvider(), getJvm());
+        // TODO acc. to XSTR-744 this means that an XStream2 instance is not thread-safe and we would need a pool:
         a.autodetectAnnotations(true);
 
         mapperInjectionPoint = new MapperInjectionPoint(a);
@@ -147,6 +169,25 @@ public class XStream2 extends XStream {
 
     public Mapper getMapperInjectionPoint() {
         return mapperInjectionPoint.getDelegate();
+    }
+
+    /**
+     * @deprecated Uses default encoding yet fails to write an encoding header. Prefer {@link #toXMLUTF8}.
+     */
+    @Deprecated
+    @Override public void toXML(Object obj, OutputStream out) {
+        super.toXML(obj, out);
+    }
+
+    /**
+     * Serializes to a byte stream.
+     * Uses UTF-8 encoding and specifies that in the XML encoding declaration.
+     * @since 1.504
+     */
+    public void toXMLUTF8(Object obj, OutputStream out) throws IOException {
+        Writer w = new OutputStreamWriter(out, Charset.forName("UTF-8"));
+        w.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        toXML(obj, w);
     }
 
     /**
@@ -303,7 +344,7 @@ public class XStream2 extends XStream {
      * callback code just after a type is unmarshalled by RobustReflectionConverter.
      * Example: <pre> public static class ConverterImpl extends XStream2.PassthruConverter&lt;MyType&gt; {
      *   public ConverterImpl(XStream2 xstream) { super(xstream); }
-     *   @Override protected void callback(MyType obj, UnmarshallingContext context) {
+     *   {@literal @}Override protected void callback(MyType obj, UnmarshallingContext context) {
      *     ...
      * </pre>
      */
@@ -331,4 +372,42 @@ public class XStream2 extends XStream {
 
         protected abstract void callback(T obj, UnmarshallingContext context);
     }
+
+    /**
+     * Marks serialized classes as being owned by particular components.
+     */
+    interface ClassOwnership {
+        /**
+         * Looks up the owner of a class, if any.
+         * @param clazz a class which might be from a plugin
+         * @return an identifier such as plugin name, or null
+         */
+        @CheckForNull String ownerOf(Class<?> clazz);
+    }
+    
+    class PluginClassOwnership implements ClassOwnership {
+
+        private PluginManager pm;
+
+        @SuppressWarnings("NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE") // classOwnership checked for null so why does FB complain?
+        @Override public String ownerOf(Class<?> clazz) {
+            if (classOwnership != null) {
+                return classOwnership.ownerOf(clazz);
+            }
+            if (pm == null) {
+                Jenkins j = Jenkins.getInstance();
+                if (j != null) {
+                    pm = j.getPluginManager();
+                }
+            }
+            if (pm == null) {
+                return null;
+            }
+            // TODO: possibly recursively scan super class to discover dependencies
+            PluginWrapper p = pm.whichPlugin(clazz);
+            return p != null ? p.getShortName() + '@' + trimVersion(p.getVersion()) : null;
+        }
+
+    }
+
 }

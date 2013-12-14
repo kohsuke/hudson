@@ -25,6 +25,7 @@ package hudson.diagnosis;
 
 import hudson.XmlFile;
 import hudson.model.AdministrativeMonitor;
+import hudson.model.ManagementLink;
 import jenkins.model.Jenkins;
 import hudson.Extension;
 import hudson.model.Item;
@@ -174,7 +175,15 @@ public class OldDataMonitor extends AdministrativeMonitor {
             }
         }
         if (buf.length() == 0) return;
-        OldDataMonitor odm = (OldDataMonitor) Jenkins.getInstance().getAdministrativeMonitor("OldData");
+        Jenkins j = Jenkins.getInstance();
+        if (j == null) {
+            // Startup failed, something is very broken, so report what we can.
+            for (Throwable t : errors) {
+                LOGGER.log(Level.WARNING, "could not read " + obj + " (and Jenkins did not start up)", t);
+            }
+            return;
+        }
+        OldDataMonitor odm = (OldDataMonitor) j.getAdministrativeMonitor("OldData");
         synchronized (odm) {
             VersionRange vr = odm.data.get(obj);
             if (vr != null) vr.extra = buf.toString();
@@ -281,5 +290,27 @@ public class OldDataMonitor extends AdministrativeMonitor {
 
     public HttpResponse doIndex(StaplerResponse rsp) throws IOException {
         return new HttpRedirect("manage");
+    }
+
+    @Extension
+    public static class ManagementLinkImpl extends ManagementLink {
+        @Override
+        public String getIconFileName() {
+            return "document.png";
+        }
+
+        @Override
+        public String getUrlName() {
+            return "administrativeMonitor/OldData/";
+        }
+
+        @Override
+        public String getDescription() {
+            return Messages.OldDataMonitor_Description();
+        }
+
+        public String getDisplayName() {
+            return Messages.OldDataMonitor_DisplayName();
+        }
     }
 }

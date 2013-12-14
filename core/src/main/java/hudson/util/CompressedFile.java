@@ -40,8 +40,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
+import com.jcraft.jzlib.GZIPInputStream;
+import com.jcraft.jzlib.GZIPOutputStream;
 
 /**
  * Represents write-once read-many file that can be optiionally compressed
@@ -159,7 +159,7 @@ public class CompressedFile {
      */
     private static final ExecutorService compressionThread = new ThreadPoolExecutor(
         0, 1, 5L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
-        new ExceptionCatchingThreadFactory(new DaemonThreadFactory()));
+        new ExceptionCatchingThreadFactory(new NamingThreadFactory(new DaemonThreadFactory(), "CompressedFile")));
 
     private static final Logger LOGGER = Logger.getLogger(CompressedFile.class.getName());
 }
