@@ -41,6 +41,7 @@ import hudson.model.Describable;
 import hudson.model.TaskListener;
 import hudson.model.Node;
 import hudson.model.WorkspaceCleanupThread;
+import hudson.util.IOUtils;
 import jenkins.model.Jenkins;
 import hudson.model.Descriptor;
 import hudson.model.Api;
@@ -421,6 +422,14 @@ public abstract class SCM implements Describable<SCM>, ExtensionPoint {
     public abstract boolean checkout(AbstractBuild<?,?> build, Launcher launcher, FilePath workspace, BuildListener listener, File changelogFile) throws IOException, InterruptedException;
 
     /**
+     * Get a chance to do operations after the workspace i checked out and the changelog is written.
+     * @since 1.534, 1.532.1
+     */
+    public void postCheckout(AbstractBuild<?,?> build, Launcher launcher, FilePath workspace, BuildListener listener) throws IOException, InterruptedException {
+        /* Default implementation is noop */
+    }
+
+    /**
      * Adds environmental variables for the builds to the given map.
      *
      * <p>
@@ -570,14 +579,17 @@ public abstract class SCM implements Describable<SCM>, ExtensionPoint {
 //
 
     protected final boolean createEmptyChangeLog(File changelogFile, BuildListener listener, String rootTag) {
+        FileWriter w = null;
         try {
-            FileWriter w = new FileWriter(changelogFile);
+            w = new FileWriter(changelogFile);
             w.write("<"+rootTag +"/>");
             w.close();
             return true;
         } catch (IOException e) {
             e.printStackTrace(listener.error(e.getMessage()));
             return false;
+        } finally {
+            IOUtils.closeQuietly(w);
         }
     }
 

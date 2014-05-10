@@ -39,6 +39,8 @@ import hudson.util.StreamCopyThread;
 import hudson.util.ArgumentListBuilder;
 import hudson.util.ProcessTree;
 import org.apache.commons.io.input.NullInputStream;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -194,6 +196,13 @@ public abstract class Launcher {
             return commands;
         }
 
+        /**
+         * Hide parts of the command line from being printed to the log.
+         * @param masks true for each position in {@link #cmds(String[])} which should be masked, false to print
+         * @return this
+         * @see ArgumentListBuilder#add(String, boolean)
+         * @see #maskedPrintCommandLine(List, boolean[], FilePath)
+         */
         public ProcStarter masks(boolean... masks) {
             this.masks = masks;
             return this;
@@ -271,7 +280,8 @@ public abstract class Launcher {
          * becomes the "current" process), these variables will be also set.
          */
         public ProcStarter envs(Map<String, String> overrides) {
-            return envs(Util.mapToEnv(overrides));
+            this.envs = Util.mapToEnv(overrides);
+            return this;
         }
 
         /**
@@ -279,12 +289,19 @@ public abstract class Launcher {
          *      List of "VAR=VALUE". See {@link #envs(Map)} for the semantics.
          */
         public ProcStarter envs(String... overrides) {
+            if (overrides != null) {
+                for (String override : overrides) {
+                    if (override.indexOf('=') == -1) {
+                        throw new IllegalArgumentException(override);
+                    }
+                }
+            }
             this.envs = overrides;
             return this;
         }
 
         public String[] envs() {
-            return envs;
+            return envs.clone();
         }
 
         /**
@@ -319,9 +336,9 @@ public abstract class Launcher {
         }
 
         /**
-         * Indicates that the caller will directly write to the child process {@code stin} }via
-         * {@link Proc#getStdin()} (whereas by default you call {@link #stdin(InputStream)}
-         * and let Jenkins pump your {@link InputStream} of choosing to stdin.
+         * Indicates that the caller will directly write to the child process {@link #stdin()} via {@link Proc#getStdin()}.
+         * (Whereas by default you call {@link #stdin(InputStream)}
+         * and let Jenkins pump your {@link InputStream} of choosing to stdin.)
          * @since 1.399
          */
         public ProcStarter writeStdin() {
@@ -650,6 +667,11 @@ public abstract class Launcher {
         final Launcher outer = this;
         return new Launcher(outer) {
             @Override
+            public boolean isUnix() {
+                return outer.isUnix();
+            }
+ 
+            @Override
             public Proc launch(ProcStarter starter) throws IOException {
                 starter.commands.addAll(0,Arrays.asList(prefix));
                 if (starter.masks != null) {
@@ -684,11 +706,55 @@ public abstract class Launcher {
     }
 
     /**
+     * Returns a decorated {@link Launcher} that automatically adds the specified environment
+     * variables.
+     *
+     * Those that are specified in {@link ProcStarter#envs(String...)} will take precedence over
+     * what's specified here.
+     *
+     * @since 1.489
+     */
+    public final Launcher decorateByEnv(EnvVars _env) {
+        final EnvVars env = new EnvVars(_env);
+        final Launcher outer = this;
+        return new Launcher(outer) {
+            @Override
+            public boolean isUnix() {
+                return outer.isUnix();
+            }
+
+            @Override
+            public Proc launch(ProcStarter starter) throws IOException {
+                EnvVars e = new EnvVars(env);
+                if (starter.envs!=null) {
+                    for (String env : starter.envs) {
+                        e.addLine(env);
+                    }
+                }
+                starter.envs = Util.mapToEnv(e);
+                return outer.launch(starter);
+            }
+
+            @Override
+            public Channel launchChannel(String[] cmd, OutputStream out, FilePath workDir, Map<String, String> envVars) throws IOException, InterruptedException {
+                EnvVars e = new EnvVars(env);
+                e.putAll(envVars);
+                return outer.launchChannel(cmd,out,workDir,e);
+            }
+
+            @Override
+            public void kill(Map<String, String> modelEnvVars) throws IOException, InterruptedException {
+                outer.kill(modelEnvVars);
+            }
+        };
+    }
+
+    /**
      * {@link Launcher} that launches process locally.
      */
     public static class LocalLauncher extends Launcher {
         public LocalLauncher(TaskListener listener) {
-            this(listener, Jenkins.MasterComputer.localChannel);
+            this(listener, FilePath.localChannel);
         }
 
         public LocalLauncher(TaskListener listener, VirtualChannel channel) {
@@ -752,7 +818,7 @@ public abstract class Launcher {
                  * Kill the process when the channel is severed.
                  */
                 @Override
-                protected synchronized void terminate(IOException e) {
+                public synchronized void terminate(IOException e) {
                     super.terminate(e);
                     ProcessTree pt = ProcessTree.get();
                     try {
@@ -776,6 +842,30 @@ public abstract class Launcher {
             };
         }
     }
+
+    @Restricted(NoExternalUse.class)
+    public static class DummyLauncher extends Launcher {
+
+        public DummyLauncher(TaskListener listener) {
+            super(listener, null);
+        }
+
+        @Override
+        public Proc launch(ProcStarter starter) throws IOException {
+            throw new IOException("Can not call launch on a dummy launcher.");
+        }
+
+        @Override
+        public Channel launchChannel(String[] cmd, OutputStream out, FilePath workDir, Map<String, String> envVars) throws IOException, InterruptedException {
+            throw new IOException("Can not call launchChannel on a dummy launcher.");
+        }
+
+        @Override
+        public void kill(Map<String, String> modelEnvVars) throws IOException, InterruptedException {
+            // Kill method should do nothing.
+        }
+    }
+
 
     /**
      * Launches processes remotely by using the given channel.
@@ -1023,8 +1113,7 @@ public abstract class Launcher {
      */
     private static EnvVars inherit(Map<String,String> overrides) {
         EnvVars m = new EnvVars(EnvVars.masterEnvVars);
-        for (Map.Entry<String,String> o : overrides.entrySet()) 
-            m.override(o.getKey(),m.expand(o.getValue()));
+        m.overrideExpandingAll(overrides);
         return m;
     }
     

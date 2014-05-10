@@ -39,8 +39,7 @@ import hudson.model.Queue.Task;
 import hudson.model.Slave;
 import hudson.model.queue.CauseOfBlockage;
 
-import junit.framework.Assert;
-
+import org.junit.Assert;
 import org.jvnet.hudson.test.HudsonTestCase;
 
 public class NodeCanTakeTaskTest extends HudsonTestCase {
@@ -49,7 +48,7 @@ public class NodeCanTakeTaskTest extends HudsonTestCase {
         super.setUp();
 
         // Set master executor count to zero to force all jobs to slaves
-        hudson.setNumExecutors(0);
+        jenkins.setNumExecutors(0);
     }
 
     public void testTakeBlockedByProperty() throws Exception {
@@ -68,7 +67,7 @@ public class NodeCanTakeTaskTest extends HudsonTestCase {
             build.get(10, TimeUnit.SECONDS);
             fail("Expected timeout exception");
         } catch (TimeoutException e) {
-            List<BuildableItem> buildables = hudson.getQueue().getBuildableItems();
+            List<BuildableItem> buildables = jenkins.getQueue().getBuildableItems();
             Assert.assertNotNull(buildables);
             Assert.assertEquals(1, buildables.size());
 

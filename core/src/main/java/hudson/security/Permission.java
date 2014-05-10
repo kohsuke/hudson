@@ -33,6 +33,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import javax.annotation.CheckForNull;
 
 import org.jvnet.localizer.Localizable;
 
@@ -43,7 +44,7 @@ import org.jvnet.localizer.Localizable;
  * Each permission is represented by a specific instance of {@link Permission}.
  *
  * @author Kohsuke Kawaguchi
- * @see http://wiki.jenkins-ci.org/display/JENKINS/Making+your+plugin+behave+in+secured+Hudson
+ * @see <a href="https://wiki.jenkins-ci.org/display/JENKINS/Making+your+plugin+behave+in+secured+Jenkins">Plugins in secured Jenkins</a>
  */
 public final class Permission {
 
@@ -129,7 +130,7 @@ public final class Permission {
      * <pre>
      * class Foo {
      *     private static final PermissionGroup PERMISSIONS = new PermissionGroup(Foo.class,...);
-     *     public static final Permission ABC = new Permisison(PERMISSION,...) ;
+     *     public static final Permission ABC = new Permission(PERMISSION,...) ;
      * }
      * </pre>
      *
@@ -223,7 +224,7 @@ public final class Permission {
      *      null if the conversion failed.
      * @see #getId()
      */
-    public static Permission fromId(String id) {
+    public static @CheckForNull Permission fromId(String id) {
         int idx = id.lastIndexOf('.');
         if(idx<0)   return null;
 

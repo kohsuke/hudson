@@ -26,13 +26,44 @@
  */
 package jenkins.model;
 
+import antlr.ANTLRException;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.inject.Injector;
+import com.thoughtworks.xstream.XStream;
+import hudson.BulkChange;
+import hudson.DNSMultiCast;
+import hudson.DescriptorExtensionList;
+import hudson.Extension;
 import hudson.ExtensionComponent;
 import hudson.ExtensionFinder;
-import hudson.model.LoadStatistics;
-import hudson.model.Messages;
-import hudson.model.Node;
+import hudson.ExtensionList;
+import hudson.ExtensionPoint;
+import hudson.FilePath;
+import hudson.Functions;
+import hudson.Launcher;
+import hudson.Launcher.LocalLauncher;
+import hudson.LocalPluginManager;
+import hudson.Lookup;
+import hudson.Plugin;
+import hudson.PluginManager;
+import hudson.PluginWrapper;
+import hudson.ProxyConfiguration;
+import hudson.TcpSlaveAgentListener;
+import hudson.UDPBroadcastThread;
+import hudson.Util;
+import hudson.WebAppMain;
+import hudson.XmlFile;
+import hudson.cli.declarative.CLIMethod;
+import hudson.cli.declarative.CLIResolver;
+import hudson.init.InitMilestone;
+import hudson.init.InitStrategy;
+import hudson.init.TerminatorFinder;
+import hudson.lifecycle.Lifecycle;
+import hudson.lifecycle.RestartNotSupportedException;
+import hudson.logging.LogRecorderManager;
+import hudson.markup.EscapedMarkupFormatter;
+import hudson.markup.MarkupFormatter;
 import hudson.model.AbstractCIBase;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
@@ -44,13 +75,13 @@ import hudson.model.ComputerSet;
 import hudson.model.DependencyGraph;
 import hudson.model.Describable;
 import hudson.model.Descriptor;
+import hudson.model.Descriptor.FormException;
 import hudson.model.DescriptorByNameOwner;
 import hudson.model.DirectoryBrowserSupport;
 import hudson.model.Failure;
 import hudson.model.Fingerprint;
 import hudson.model.FingerprintCleanupThread;
 import hudson.model.FingerprintMap;
-import hudson.model.FullDuplexHttpChannel;
 import hudson.model.Hudson;
 import hudson.model.Item;
 import hudson.model.ItemGroup;
@@ -62,11 +93,17 @@ import hudson.model.JobPropertyDescriptor;
 import hudson.model.Label;
 import hudson.model.ListView;
 import hudson.model.LoadBalancer;
+import hudson.model.LoadStatistics;
 import hudson.model.ManagementLink;
-import hudson.model.ModifiableItemGroup;
+import hudson.model.Messages;
+import hudson.model.ModifiableViewGroup;
 import hudson.model.NoFingerprintMatch;
+import hudson.model.Node;
 import hudson.model.OverallLoadStatistics;
+import hudson.model.PaneStatusProperties;
 import hudson.model.Project;
+import hudson.model.Queue;
+import hudson.model.Queue.FlyweightTask;
 import hudson.model.RestartListener;
 import hudson.model.RootAction;
 import hudson.model.Slave;
@@ -77,61 +114,20 @@ import hudson.model.UnprotectedRootAction;
 import hudson.model.UpdateCenter;
 import hudson.model.User;
 import hudson.model.View;
-import hudson.model.ViewGroup;
 import hudson.model.ViewGroupMixIn;
-import hudson.model.Descriptor.FormException;
+import hudson.model.WorkspaceCleanupThread;
 import hudson.model.labels.LabelAtom;
 import hudson.model.listeners.ItemListener;
 import hudson.model.listeners.SCMListener;
 import hudson.model.listeners.SaveableListener;
-import hudson.model.Queue;
-import hudson.model.WorkspaceCleanupThread;
-
-import antlr.ANTLRException;
-import com.google.common.collect.ImmutableMap;
-import com.thoughtworks.xstream.XStream;
-import hudson.BulkChange;
-import hudson.DNSMultiCast;
-import hudson.DescriptorExtensionList;
-import hudson.Extension;
-import hudson.ExtensionList;
-import hudson.ExtensionPoint;
-import hudson.FilePath;
-import hudson.Functions;
-import hudson.Launcher;
-import hudson.Launcher.LocalLauncher;
-import hudson.LocalPluginManager;
-import hudson.Lookup;
-import hudson.markup.MarkupFormatter;
-import hudson.Plugin;
-import hudson.PluginManager;
-import hudson.PluginWrapper;
-import hudson.ProxyConfiguration;
-import hudson.TcpSlaveAgentListener;
-import hudson.UDPBroadcastThread;
-import hudson.Util;
-import static hudson.Util.fixEmpty;
-import static hudson.Util.fixNull;
-import hudson.WebAppMain;
-import hudson.XmlFile;
-import hudson.cli.CLICommand;
-import hudson.cli.CliEntryPoint;
-import hudson.cli.CliManagerImpl;
-import hudson.cli.declarative.CLIMethod;
-import hudson.cli.declarative.CLIResolver;
-import hudson.init.InitMilestone;
-import hudson.init.InitStrategy;
-import hudson.lifecycle.Lifecycle;
-import hudson.logging.LogRecorderManager;
-import hudson.lifecycle.RestartNotSupportedException;
-import hudson.markup.RawHtmlMarkupFormatter;
-import hudson.remoting.Channel;
+import hudson.remoting.Callable;
 import hudson.remoting.LocalChannel;
 import hudson.remoting.VirtualChannel;
 import hudson.scm.RepositoryBrowser;
 import hudson.scm.SCM;
 import hudson.search.CollectionSearchIndex;
 import hudson.search.SearchIndexBuilder;
+import hudson.search.SearchItem;
 import hudson.security.ACL;
 import hudson.security.AccessControlled;
 import hudson.security.AuthorizationStrategy;
@@ -160,8 +156,8 @@ import hudson.slaves.OfflineCause;
 import hudson.slaves.RetentionStrategy;
 import hudson.tasks.BuildWrapper;
 import hudson.tasks.Builder;
-import hudson.tasks.Mailer;
 import hudson.tasks.Publisher;
+import hudson.triggers.SafeTimerTask;
 import hudson.triggers.Trigger;
 import hudson.triggers.TriggerDescriptor;
 import hudson.util.AdministrativeError;
@@ -176,14 +172,17 @@ import hudson.util.FormValidation;
 import hudson.util.Futures;
 import hudson.util.HudsonIsLoading;
 import hudson.util.HudsonIsRestarting;
+import hudson.util.IOUtils;
 import hudson.util.Iterators;
 import hudson.util.JenkinsReloadFailed;
 import hudson.util.Memoizer;
 import hudson.util.MultipartFormDataParser;
+import hudson.util.NamingThreadFactory;
 import hudson.util.RemotingDiagnostics;
 import hudson.util.RemotingDiagnostics.HeapDump;
 import hudson.util.StreamTaskListener;
 import hudson.util.TextFile;
+import hudson.util.TimeUnit2;
 import hudson.util.VersionNumber;
 import hudson.util.XStream2;
 import hudson.views.DefaultMyViewsTabBar;
@@ -195,6 +194,12 @@ import jenkins.ExtensionComponentSet;
 import jenkins.ExtensionRefreshException;
 import jenkins.InitReactorRunner;
 import jenkins.model.ProjectNamingStrategy.DefaultProjectNamingStrategy;
+import jenkins.security.ConfidentialKey;
+import jenkins.security.ConfidentialStore;
+import jenkins.security.SecurityListener;
+import jenkins.slaves.WorkspaceLocator;
+import jenkins.util.Timer;
+import jenkins.util.io.FileBoolean;
 import net.sf.json.JSONObject;
 import org.acegisecurity.AccessDeniedException;
 import org.acegisecurity.AcegiSecurityException;
@@ -208,11 +213,11 @@ import org.apache.commons.jelly.JellyException;
 import org.apache.commons.jelly.Script;
 import org.apache.commons.logging.LogFactory;
 import org.jvnet.hudson.reactor.Executable;
+import org.jvnet.hudson.reactor.Reactor;
 import org.jvnet.hudson.reactor.ReactorException;
 import org.jvnet.hudson.reactor.Task;
 import org.jvnet.hudson.reactor.TaskBuilder;
 import org.jvnet.hudson.reactor.TaskGraphBuilder;
-import org.jvnet.hudson.reactor.Reactor;
 import org.jvnet.hudson.reactor.TaskGraphBuilder.Handle;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
@@ -238,16 +243,15 @@ import org.kohsuke.stapler.jelly.JellyClassLoaderTearOff;
 import org.kohsuke.stapler.jelly.JellyRequestDispatcher;
 import org.xml.sax.InputSource;
 
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.crypto.SecretKey;
 import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletResponse;
-
-import static hudson.init.InitMilestone.*;
-import static javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST;
-import static javax.servlet.http.HttpServletResponse.SC_NOT_FOUND;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
@@ -255,11 +259,10 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.BindException;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.security.SecureRandom;
-import java.text.Collator;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -273,25 +276,28 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
-import java.util.Stack;
 import java.util.StringTokenizer;
-import java.util.Timer;
 import java.util.TreeSet;
-import java.util.UUID;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
-import static java.util.logging.Level.SEVERE;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
-import java.util.regex.Pattern;
+
+import static hudson.Util.*;
+import static hudson.init.InitMilestone.*;
+import static java.util.logging.Level.*;
+import static javax.servlet.http.HttpServletResponse.*;
 
 /**
  * Root object of the system.
@@ -299,7 +305,9 @@ import java.util.regex.Pattern;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLevelItem>, StaplerProxy, StaplerFallback, ViewGroup, AccessControlled, DescriptorByNameOwner, ModelObjectWithContextMenu {
+public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLevelItemGroup, StaplerProxy, StaplerFallback,
+        ModifiableViewGroup, AccessControlled, DescriptorByNameOwner,
+        ModelObjectWithContextMenu, ModelObjectWithChildren {
     private transient final Queue queue;
 
     /**
@@ -367,6 +375,13 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * @see #setSecurityRealm(SecurityRealm)
      */
     private volatile SecurityRealm securityRealm = SecurityRealm.NO_AUTHENTICATION;
+
+    /**
+     * Disables the remember me on this computer option in the standard login screen.
+     *
+     * @since 1.534
+     */
+    private volatile boolean disableRememberMe;
     
     /**
      * The project naming strategy defines/restricts the names which can be given to a project/job. e.g. does the name have to follow a naming convention?
@@ -374,17 +389,15 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     private ProjectNamingStrategy projectNamingStrategy = DefaultProjectNamingStrategy.DEFAULT_NAMING_STRATEGY;
 
     /**
-     * Root directory for the workspaces. This value will be variable-expanded against
-     * job name and JENKINS_HOME.
-     *
+     * Root directory for the workspaces.
+     * This value will be variable-expanded as per {@link #expandVariablesForDirectory}.
      * @see #getWorkspaceFor(TopLevelItem)
      */
     private String workspaceDir = "${ITEM_ROOTDIR}/"+WORKSPACE_DIRNAME;
 
     /**
-     * Root directory for the workspaces. This value will be variable-expanded against
-     * job name and JENKINS_HOME.
-     *
+     * Root directory for the builds.
+     * This value will be variable-expanded as per {@link #expandVariablesForDirectory}.
      * @see #getBuildDirFor(Job)
      */
     private String buildsDir = "${ITEM_ROOTDIR}/builds";
@@ -422,6 +435,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     private List<JDK> jdks = new ArrayList<JDK>();
 
     private transient volatile DependencyGraph dependencyGraph;
+    private final transient AtomicBoolean dependencyGraphDirty = new AtomicBoolean();
 
     /**
      * Currently active Views tab bar.
@@ -460,7 +474,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Active {@link Cloud}s.
      */
     public final Hudson.CloudList clouds = new Hudson.CloudList(this);
-
+    
     public static class CloudList extends DescribableList<Cloud,Descriptor<Cloud>> {
         public CloudList(Jenkins h) {
             super(h);
@@ -579,12 +593,12 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     /**
      * Load statistics of the free roaming jobs and slaves.
      * 
-     * This includes all executors on {@link Mode#NORMAL} nodes and jobs that do not have any assigned nodes.
+     * This includes all executors on {@link hudson.model.Node.Mode#NORMAL} nodes and jobs that do not have any assigned nodes.
      *
      * @since 1.467
      */
     @Exported
-    public transient final LoadStatistics unlabeledLoad = new UnlabeldLoadStatistics();
+    public transient final LoadStatistics unlabeledLoad = new UnlabeledLoadStatistics();
 
     /**
      * {@link NodeProvisioner} that reacts to {@link #unlabeledLoad}.
@@ -687,7 +701,12 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         }
     };
 
+    /**
+     * Gets the Jenkins singleton.
+     * @return the instance, or null if Jenkins has not been started, or was already shut down
+     */
     @CLIResolver
+    @CheckForNull
     public static Jenkins getInstance() {
         return HOLDER.getInstance();
     }
@@ -724,7 +743,10 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * @param pluginManager
      *      If non-null, use existing plugin manager.  create a new one.
      */
-    @edu.umd.cs.findbugs.annotations.SuppressWarnings("SC_START_IN_CTOR") // bug in FindBugs. It flags UDPBroadcastThread.start() call but that's for another class
+    @edu.umd.cs.findbugs.annotations.SuppressWarnings({
+        "SC_START_IN_CTOR", // bug in FindBugs. It flags UDPBroadcastThread.start() call but that's for another class
+        "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD" // Trigger.timer
+    })
     protected Jenkins(File root, ServletContext context, PluginManager pluginManager) throws IOException, InterruptedException, ReactorException {
         long start = System.currentTimeMillis();
         
@@ -746,8 +768,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             // doing this early allows InitStrategy to set environment upfront
             final InitStrategy is = InitStrategy.get(Thread.currentThread().getContextClassLoader());
 
-            Trigger.timer = new Timer("Jenkins cron thread");
-            queue = new Queue(CONSISTENT_HASH?LoadBalancer.CONSISTENT_HASH:LoadBalancer.DEFAULT);
+            Trigger.timer = new java.util.Timer("Jenkins cron thread");
+            queue = new Queue(LoadBalancer.CONSISTENT_HASH);
 
             try {
                 dependencyGraph = DependencyGraph.EMPTY;
@@ -768,6 +790,10 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                 sr.nextBytes(random);
                 secretKey = Util.toHexString(random);
                 secretFile.write(secretKey);
+
+                // this marker indicates that the secret.key is generated by the version of Jenkins post SECURITY-49.
+                // this indicates that there's no need to rewrite secrets on disk
+                new FileBoolean(new File(root,"secret.key.not-so-secret")).on();
             }
 
             try {
@@ -782,7 +808,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             // JSON binding needs to be able to see all the classes from all the plugins
             WebApp.get(servletContext).setClassLoader(pluginManager.uberClassLoader);
 
-            adjuncts = new AdjunctManager(servletContext, pluginManager.uberClassLoader,"adjuncts/"+SESSION_HASH);
+            adjuncts = new AdjunctManager(servletContext, pluginManager.uberClassLoader,"adjuncts/"+SESSION_HASH, TimeUnit2.DAYS.toMillis(365));
 
             // initialization consists of ...
             executeReactor( is,
@@ -805,13 +831,22 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             } else
                 tcpSlaveAgentListener = null;
 
-            try {
-                udpBroadcastThread = new UDPBroadcastThread(this);
-                udpBroadcastThread.start();
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to broadcast over UDP",e);
+            if (UDPBroadcastThread.PORT != -1) {
+                try {
+                    udpBroadcastThread = new UDPBroadcastThread(this);
+                    udpBroadcastThread.start();
+                } catch (IOException e) {
+                    LOGGER.log(Level.WARNING, "Failed to broadcast over UDP (use -Dhudson.udp=-1 to disable)", e);
+                }
             }
             dnsMultiCast = new DNSMultiCast(this);
+
+            Timer.get().scheduleAtFixedRate(new SafeTimerTask() {
+                @Override
+                protected void doRun() throws Exception {
+                    trimLabels();
+                }
+            }, TimeUnit2.MINUTES.toMillis(5), TimeUnit2.MINUTES.toMillis(5), TimeUnit.MILLISECONDS);
 
             updateComputerList();
 
@@ -824,7 +859,11 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
             for (ItemListener l : ItemListener.all()) {
                 long itemListenerStart = System.currentTimeMillis();
-                l.onLoaded();
+                try {
+                    l.onLoaded();
+                } catch (RuntimeException x) {
+                    LOGGER.log(Level.WARNING, null, x);
+                }
                 if (LOG_STARTUP_PERFORMANCE)
                     LOGGER.info(String.format("Took %dms for item listener %s startup",
                             System.currentTimeMillis()-itemListenerStart,l.getClass().getName()));
@@ -956,7 +995,15 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     /**
+     * @since 1.484
+     */
+    public View.AsynchPeople getAsynchPeople() {
+        return new View.AsynchPeople(this);
+    }
+
+    /**
      * Does this {@link View} has any associated user information recorded?
+     * @deprecated Potentially very expensive call; do not use from Jelly views.
      */
     public boolean hasPeople() {
         return View.People.isApplicable(items.values());
@@ -970,6 +1017,10 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Returns a secret key that survives across container start/stop.
      * <p>
      * This value is useful for implementing some of the security features.
+     *
+     * @deprecated
+     *      Due to the past security advisory, this value should not be used any more to protect sensitive information.
+     *      See {@link ConfidentialStore} and {@link ConfidentialKey} for how to store secrets.
      */
     public String getSecretKey() {
         return secretKey;
@@ -978,9 +1029,27 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     /**
      * Gets {@linkplain #getSecretKey() the secret key} as a key for AES-128.
      * @since 1.308
+     * @deprecated
+     *       See {@link #getSecretKey()}.
      */
     public SecretKey getSecretKeyAsAES128() {
         return Util.toAes128Key(secretKey);
+    }
+
+    /**
+     * Returns the unique identifier of this Jenkins that has been historically used to identify
+     * this Jenkins to the outside world.
+     *
+     * <p>
+     * This form of identifier is weak in that it can be impersonated by others. See
+     * https://wiki.jenkins-ci.org/display/JENKINS/Instance+Identity for more modern form of instance ID
+     * that can be challenged and verified.
+     *
+     * @since 1.498
+     */
+    @SuppressWarnings("deprecation")
+    public String getLegacyInstanceId() {
+        return Util.getDigestOf(getSecretKey());
     }
 
     /**
@@ -1057,17 +1126,29 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      *
      * @param id
      *      Either {@link Descriptor#getId()} (recommended) or the short name of a {@link Describable} subtype (for compatibility)
+     * @throws IllegalArgumentException if a short name was passed which matches multiple IDs (fail fast)
      */
+    @SuppressWarnings({"unchecked", "rawtypes"}) // too late to fix
     public Descriptor getDescriptor(String id) {
         // legacy descriptors that are reigstered manually doesn't show up in getExtensionList, so check them explicitly.
-        for( Descriptor d : Iterators.sequence(getExtensionList(Descriptor.class),DescriptorExtensionList.listLegacyInstances()) ) {
-            String name = d.getId();
-            if(name.equals(id))
+        Iterable<Descriptor> descriptors = Iterators.sequence(getExtensionList(Descriptor.class), DescriptorExtensionList.listLegacyInstances());
+        for (Descriptor d : descriptors) {
+            if (d.getId().equals(id)) {
                 return d;
-            if(name.substring(name.lastIndexOf('.')+1).equals(id))
-                return d;
+            }
         }
-        return null;
+        Descriptor candidate = null;
+        for (Descriptor d : descriptors) {
+            String name = d.getId();
+            if (name.substring(name.lastIndexOf('.') + 1).equals(id)) {
+                if (candidate == null) {
+                    candidate = d;
+                } else {
+                    throw new IllegalArgumentException(id + " is ambiguous; matches both " + name + " and " + candidate.getId());
+                }
+            }
+        }
+        return candidate;
     }
 
     /**
@@ -1193,7 +1274,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     /**
-     * Synonym to {@link #getNodeDescription()}.
+     * Synonym for {@link #getDescription}.
      */
     public String getSystemMessage() {
         return systemMessage;
@@ -1206,8 +1287,9 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      *      never null.
      * @since 1.391
      */
-    public MarkupFormatter getMarkupFormatter() {
-        return markupFormatter!=null ? markupFormatter : RawHtmlMarkupFormatter.INSTANCE;
+    public @Nonnull MarkupFormatter getMarkupFormatter() {
+        MarkupFormatter f = markupFormatter;
+        return f != null ? f : new EscapedMarkupFormatter();
     }
 
     /**
@@ -1320,24 +1402,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * and filter them by the given type.
      */
     public <T extends Item> List<T> getAllItems(Class<T> type) {
-        List<T> r = new ArrayList<T>();
-
-        Stack<ItemGroup> q = new Stack<ItemGroup>();
-        q.push(this);
-
-        while(!q.isEmpty()) {
-            ItemGroup<?> parent = q.pop();
-            for (Item i : parent.getItems()) {
-                if(type.isInstance(i)) {
-                    if (i.hasPermission(Item.READ))
-                        r.add(type.cast(i));
-                }
-                if(i instanceof ItemGroup)
-                    q.push((ItemGroup)i);
-            }
-        }
-
-        return r;
+        return Items.getAllItems(this, type);
     }
 
     /**
@@ -1350,12 +1415,15 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     /**
-     * Gets the list of all the projects.
-     *
-     * <p>
-     * Since {@link Project} can only show up under {@link Jenkins},
-     * no need to search recursively.
+     * Gets a list of simple top-level projects.
+     * @deprecated This method will ignore Maven and matrix projects, as well as projects inside containers such as folders.
+     * You may prefer to call {@link #getAllItems(Class)} on {@link AbstractProject},
+     * perhaps also using {@link Util#createSubList} to consider only {@link TopLevelItem}s.
+     * (That will also consider the caller's permissions.)
+     * If you really want to get just {@link Project}s at top level, ignoring permissions,
+     * you can filter the values from {@link #getItemMap} using {@link Util#createSubList}.
      */
+    @Deprecated
     public List<Project> getProjects() {
         return Util.createSubList(items.values(),Project.class);
     }
@@ -1396,6 +1464,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         return viewGroupMixIn.getViews();
     }
 
+    @Override
     public void addView(View v) throws IOException {
         viewGroupMixIn.addView(v);
     }
@@ -1445,7 +1514,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     /**
-     * Returns true if the current running Hudson is upgraded from a version earlier than the specified version.
+     * Returns true if the current running Jenkins is upgraded from a version earlier than the specified version.
      *
      * <p>
      * This method continues to return true until the system configuration is saved, at which point
@@ -1473,11 +1542,10 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     public Computer[] getComputers() {
         Computer[] r = computers.values().toArray(new Computer[computers.size()]);
         Arrays.sort(r,new Comparator<Computer>() {
-            final Collator collator = Collator.getInstance();
-            public int compare(Computer lhs, Computer rhs) {
+            @Override public int compare(Computer lhs, Computer rhs) {
                 if(lhs.getNode()==Jenkins.this)  return -1;
                 if(rhs.getNode()==Jenkins.this)  return 1;
-                return collator.compare(lhs.getDisplayName(), rhs.getDisplayName());
+                return lhs.getName().compareTo(rhs.getName());
             }
         });
         return r;
@@ -1503,6 +1571,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      */
     public Label getLabel(String expr) {
         if(expr==null)  return null;
+        expr = hudson.util.QuotedStringTokenizer.unquote(expr);
         while(true) {
             Label l = labels.get(expr);
             if(l!=null)
@@ -1520,8 +1589,9 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     /**
      * Returns the label atom of the given name.
+     * @return non-null iff name is non-null
      */
-    public LabelAtom getLabelAtom(String name) {
+    public @Nullable LabelAtom getLabelAtom(@CheckForNull String name) {
         if (name==null)  return null;
 
         while(true) {
@@ -1594,7 +1664,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     /**
      * Gets the slave node of the give name, hooked under this Hudson.
      */
-    public Node getNode(String name) {
+    public @CheckForNull Node getNode(String name) {
         return slaves.getNode(name);
     }
 
@@ -1631,7 +1701,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     /**
      * Removes a {@link Node} from Hudson.
      */
-    public synchronized void removeNode(Node n) throws IOException {
+    public synchronized void removeNode(@Nonnull Node n) throws IOException {
         Computer c = n.toComputer();
         if (c!=null)
             c.disconnect(OfflineCause.create(Messages._Hudson_NodeBeingRemoved()));
@@ -1658,6 +1728,9 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     /**
      * Resets all labels and remove invalid ones.
+     *
+     * This should be called when the assumptions behind label cache computation changes,
+     * but we also call this periodically to self-heal any data out-of-sync issue.
      */
     private void trimLabels() {
         for (Iterator<Label> itr = labels.values().iterator(); itr.hasNext();) {
@@ -1697,6 +1770,17 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
         public FormValidation doCheckNumExecutors(@QueryParameter String value) {
             return FormValidation.validateNonNegativeInteger(value);
+        }
+
+        public FormValidation doCheckRawBuildsDir(@QueryParameter String value) {
+            if (!value.contains("${")) {
+                File d = new File(value);
+                if (!d.isDirectory() && (d.getParentFile() == null || !d.getParentFile().canWrite())) {
+                    return FormValidation.error(value + " does not exist and probably cannot be created");
+                }
+                // TODO failure to use either ITEM_* variable might be an error too?
+            }
+            return FormValidation.ok(); // TODO assumes it will be OK after substitution, but can we be sure?
         }
 
         // to route /descriptor/FQCN/xxx to getDescriptor(FQCN).xxx
@@ -1746,6 +1830,10 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             .add("configure", "config","configure")
             .add("manage")
             .add("log")
+            .add(new CollectionSearchIndex<TopLevelItem>() {
+                protected SearchItem get(String key) { return getItemByFullName(key, TopLevelItem.class); }
+                protected Collection<TopLevelItem> all() { return getAllItems(TopLevelItem.class); }
+            })
             .add(getPrimaryView().makeSearchIndex())
             .add(new CollectionSearchIndex() {// for computers
                 protected Computer get(String key) { return getComputer(key); }
@@ -1782,15 +1870,13 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * @since 1.66
      * @see Descriptor#getCheckUrl(String)
      * @see #getRootUrlFromRequest()
+     * @see <a href="https://wiki.jenkins-ci.org/display/JENKINS/Hyperlinks+in+HTML">Hyperlinks in HTML</a>
      */
     public String getRootUrl() {
-        // for compatibility. the actual data is stored in Mailer
-        String url = Mailer.descriptor().getUrl();
+        String url = JenkinsLocationConfiguration.get().getUrl();
         if(url!=null) {
-            if (!url.endsWith("/")) url += '/';
-            return url;
+            return Util.ensureEndsWith(url,"/");
         }
-
         StaplerRequest req = Stapler.getCurrentRequest();
         if(req!=null)
             return getRootUrlFromRequest();
@@ -1829,7 +1915,12 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     public String getRootUrlFromRequest() {
         StaplerRequest req = Stapler.getCurrentRequest();
         StringBuilder buf = new StringBuilder();
-        buf.append(req.getScheme()+"://");
+        String scheme = req.getScheme();
+        String forwardedScheme = req.getHeader("X-Forwarded-Proto");
+        if (forwardedScheme != null) {
+            scheme = forwardedScheme;
+        }
+        buf.append(scheme+"://");
         buf.append(req.getServerName());
         if(req.getServerPort()!=80)
             buf.append(':').append(req.getServerPort());
@@ -1842,6 +1933,13 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     public FilePath getWorkspaceFor(TopLevelItem item) {
+        for (WorkspaceLocator l : WorkspaceLocator.all()) {
+            FilePath workspace = l.locate(item, this);
+            if (workspace != null) {
+                return workspace;
+            }
+        }
+ 
         return new FilePath(expandVariablesForDirectory(workspaceDir, item));
     }
 
@@ -1853,7 +1951,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         return new File(Util.replaceMacro(base, ImmutableMap.of(
                 "JENKINS_HOME", getRootDir().getPath(),
                 "ITEM_ROOTDIR", item.getRootDir().getPath(),
-                "ITEM_FULLNAME", item.getFullName())));
+                "ITEM_FULLNAME", item.getFullName(),   // legacy, deprecated
+                "ITEM_FULL_NAME", item.getFullName().replace(':','$')))); // safe, see JENKINS-12251
     }
     
     public String getRawWorkspaceDir() {
@@ -1875,6 +1974,15 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     public ClockDifference getClockDifference() {
         return ClockDifference.ZERO;
+    }
+
+    @Override
+    public Callable<ClockDifference, IOException> getClockDifferenceCallable() {
+        return new Callable<ClockDifference, IOException>() {
+            public ClockDifference call() throws IOException {
+                return new ClockDifference(0);
+            }
+        };
     }
 
     /**
@@ -1961,6 +2069,14 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         authorizationStrategy = a;
     }
 
+    public boolean isDisableRememberMe() {
+        return disableRememberMe;
+    }
+
+    public void setDisableRememberMe(boolean disableRememberMe) {
+        this.disableRememberMe = disableRememberMe;
+    }
+
     public void disableSecurity() {
         useSecurity = null;
         setSecurityRealm(SecurityRealm.NO_AUTHENTICATION);
@@ -1983,7 +2099,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Gets the dependency injection container that hosts all the extension implementations and other
      * components in Jenkins.
      *
-     * @since 1.GUICE
+     * @since 1.433
      */
     public Injector getInjector() {
         return lookup(Injector.class);
@@ -2040,14 +2156,14 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         for (ExtensionFinder ef : finders) {
             fragments.add(ef.refresh());
         }
-        ExtensionComponentSet delta = ExtensionComponentSet.union(fragments);
+        ExtensionComponentSet delta = ExtensionComponentSet.union(fragments).filtered();
 
         // if we find a new ExtensionFinder, we need it to list up all the extension points as well
         List<ExtensionComponent<ExtensionFinder>> newFinders = Lists.newArrayList(delta.find(ExtensionFinder.class));
         while (!newFinders.isEmpty()) {
             ExtensionFinder f = newFinders.remove(newFinders.size()-1).getInstance();
 
-            ExtensionComponentSet ecs = ExtensionComponentSet.allOf(f);
+            ExtensionComponentSet ecs = ExtensionComponentSet.allOf(f).filtered();
             newFinders.addAll(ecs.find(ExtensionFinder.class));
             delta = ExtensionComponentSet.union(delta, ecs);
         }
@@ -2156,7 +2272,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * If the name starts from '/', like "/foo/bar/zot", then it's interpreted as absolute.
      * Otherwise, the name should be something like "foo/bar" and it's interpreted like
      * relative path name in the file system is, against the given context.
-     *
+     * <p>For compatibility, as a fallback when nothing else matches, a simple path
+     * like {@code foo/bar} can also be treated with {@link #getItemByFullName}.
      * @param context
      *      null is interpreted as {@link Jenkins}. Base 'directory' of the interpretation.
      * @since 1.406
@@ -2189,7 +2306,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             if (ctx instanceof ItemGroup) {
                 ItemGroup g = (ItemGroup) ctx;
                 Item i = g.getItem(s);
-                if (i==null || !i.hasPermission(Item.READ)) {
+                if (i==null || !i.hasPermission(Item.READ)) { // TODO consider DISCOVER
                     ctx=null;    // can't go up further
                     break;
                 }
@@ -2238,7 +2355,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      *      null if either such {@link Item} doesn't exist under the given full name,
      *      or it exists but it's no an instance of the given type.
      */
-    public <T extends Item> T getItemByFullName(String fullName, Class<T> type) {
+    public @CheckForNull <T extends Item> T getItemByFullName(String fullName, Class<T> type) {
         StringTokenizer tokens = new StringTokenizer(fullName,"/");
         ItemGroup parent = this;
 
@@ -2257,44 +2374,30 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                 return null;    // this item can't have any children
 
             if (!item.hasPermission(Item.READ))
-                return null;
+                return null; // TODO consider DISCOVER
 
             parent = (ItemGroup) item;
         }
     }
 
-    public Item getItemByFullName(String fullName) {
+    public @CheckForNull Item getItemByFullName(String fullName) {
         return getItemByFullName(fullName,Item.class);
     }
 
     /**
      * Gets the user of the given name.
      *
-     * @return
-     *      This method returns a non-null object for any user name, without validation.
+     * @return the user of the given name, if that person exists or the invoker {@link #hasPermission} on {@link #ADMINISTER}; else null
+     * @see User#get(String,boolean)
      */
-    public User getUser(String name) {
+    public @CheckForNull User getUser(String name) {
         return User.get(name,hasPermission(ADMINISTER));
     }
 
-    /**
-     * Creates a new job.
-     *
-     * @throws IllegalArgumentException
-     *      if the project of the given name already exists.
-     */
     public synchronized TopLevelItem createProject( TopLevelItemDescriptor type, String name ) throws IOException {
         return createProject(type, name, true);
     }
 
-    /**
-     * Creates a new job.
-     * @param type Descriptor for job type
-     * @param name Name for job
-     * @param notify Whether to fire onCreated method for all ItemListeners
-     * @throws IllegalArgumentException
-     *      if a project of the give name already exists.
-     */
     public synchronized TopLevelItem createProject( TopLevelItemDescriptor type, String name, boolean notify ) throws IOException {
         return itemGroupMixIn.createProject(type,name,notify);
     }
@@ -2338,22 +2441,37 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         items.remove(oldName);
         items.put(newName,job);
 
+        // For compatibility with old views:
         for (View v : views)
             v.onJobRenamed(job, oldName, newName);
-        save();
     }
 
     /**
      * Called in response to {@link Job#doDoDelete(StaplerRequest, StaplerResponse)}
      */
     public void onDeleted(TopLevelItem item) throws IOException {
-        for (ItemListener l : ItemListener.all())
-            l.onDeleted(item);
+        ItemListener.fireOnDeleted(item);
 
         items.remove(item.getName());
+        // For compatibility with old views:
         for (View v : views)
             v.onJobRenamed(item, item.getName(), null);
-        save();
+    }
+
+    @Override public boolean canAdd(TopLevelItem item) {
+        return true;
+    }
+
+    @Override synchronized public <I extends TopLevelItem> I add(I item, String name) throws IOException, IllegalArgumentException {
+        if (items.containsKey(name)) {
+            throw new IllegalArgumentException("already an item '" + name + "'");
+        }
+        items.put(name, item);
+        return item;
+    }
+
+    @Override public void remove(TopLevelItem item) throws IOException, IllegalArgumentException {
+        items.remove(item.getName());
     }
 
     public FingerprintMap getFingerprintMap() {
@@ -2399,6 +2517,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         return fixNull(label).trim();
     }
 
+    @Override
     public void setLabelString(String label) throws IOException {
         this.label = label;
         save();
@@ -2415,7 +2534,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     private synchronized TaskBuilder loadTasks() throws IOException {
         File projectsDir = new File(root,"jobs");
-        if(!projectsDir.isDirectory() && !projectsDir.mkdirs()) {
+        if(!projectsDir.getCanonicalFile().isDirectory() && !projectsDir.mkdirs()) {
             if(projectsDir.exists())
                 throw new IOException(projectsDir+" is not a directory");
             throw new IOException("Unable to create "+projectsDir+"\nPermission issue? Please create this directory manually.");
@@ -2425,6 +2544,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                 return child.isDirectory() && Items.getConfigFile(child).exists();
             }
         });
+
+        final Set<String> loadedNames = Collections.synchronizedSet(new HashSet<String>());
 
         TaskGraphBuilder g = new TaskGraphBuilder();
         Handle loadHudson = g.requires(EXTENSIONS_AUGMENTED).attains(JOB_LOADED).add("Loading global config", new Executable() {
@@ -2448,7 +2569,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                 if (slaves == null) slaves = new NodeList();
 
                 clouds.setOwner(Jenkins.this);
-                items.clear();
 
                 // JENKINS-8043: re-add the slaves which were not saved into the config file
                 // and are now missing, but still connected.
@@ -2471,9 +2591,25 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                 public void run(Reactor session) throws Exception {
                     TopLevelItem item = (TopLevelItem) Items.load(Jenkins.this, subdir);
                     items.put(item.getName(), item);
+                    loadedNames.add(item.getName());
                 }
             });
         }
+
+        g.requires(JOB_LOADED).add("Cleaning up old builds",new Executable() {
+            public void run(Reactor reactor) throws Exception {
+                // anything we didn't load from disk, throw them away.
+                // doing this after loading from disk allows newly loaded items
+                // to inspect what already existed in memory (in case of reloading)
+
+                // retainAll doesn't work well because of CopyOnWriteMap implementation, so remove one by one
+                // hopefully there shouldn't be too many of them.
+                for (String name : items.keySet()) {
+                    if (!loadedNames.contains(name))
+                        items.remove(name);
+                }
+            }
+        });
 
         g.requires(JOB_LOADED).add("Finalizing set up",new Executable() {
             public void run(Reactor session) throws Exception {
@@ -2495,29 +2631,30 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                     primaryView = v.getViewName();
                 }
 
-                // read in old data that doesn't have the security field set
-                if(authorizationStrategy==null) {
-                    if(useSecurity==null || !useSecurity)
-                        authorizationStrategy = AuthorizationStrategy.UNSECURED;
-                    else
-                        authorizationStrategy = new LegacyAuthorizationStrategy();
-                }
-                if(securityRealm==null) {
-                    if(useSecurity==null || !useSecurity)
-                        setSecurityRealm(SecurityRealm.NO_AUTHENTICATION);
-                    else
-                        setSecurityRealm(new LegacySecurityRealm());
-                } else {
-                    // force the set to proxy
-                    setSecurityRealm(securityRealm);
-                }
-
-                if(useSecurity!=null && !useSecurity) {
+                if (useSecurity!=null && !useSecurity) {
                     // forced reset to the unsecure mode.
                     // this works as an escape hatch for people who locked themselves out.
                     authorizationStrategy = AuthorizationStrategy.UNSECURED;
                     setSecurityRealm(SecurityRealm.NO_AUTHENTICATION);
+                } else {
+                    // read in old data that doesn't have the security field set
+                    if(authorizationStrategy==null) {
+                        if(useSecurity==null)
+                            authorizationStrategy = AuthorizationStrategy.UNSECURED;
+                        else
+                            authorizationStrategy = new LegacyAuthorizationStrategy();
+                    }
+                    if(securityRealm==null) {
+                        if(useSecurity==null)
+                            setSecurityRealm(SecurityRealm.NO_AUTHENTICATION);
+                        else
+                            setSecurityRealm(new LegacySecurityRealm());
+                    } else {
+                        // force the set to proxy
+                        setSecurityRealm(securityRealm);
+                    }
                 }
+
 
                 // Initialize the filter with the crumb issuer
                 setCrumbIssuer(crumbIssuer);
@@ -2544,9 +2681,28 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     /**
      * Called to shut down the system.
      */
+    @edu.umd.cs.findbugs.annotations.SuppressWarnings("ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD")
     public void cleanUp() {
         for (ItemListener l : ItemListener.all())
             l.onBeforeShutdown();
+
+        try {
+            final TerminatorFinder tf = new TerminatorFinder(
+                    pluginManager != null ? pluginManager.uberClassLoader : Thread.currentThread().getContextClassLoader());
+            new Reactor(tf).execute(new Executor() {
+                @Override
+                public void execute(Runnable command) {
+                    command.run();
+                }
+            });
+        } catch (InterruptedException e) {
+            LOGGER.log(SEVERE, "Failed to execute termination",e);
+            e.printStackTrace();
+        } catch (ReactorException e) {
+            LOGGER.log(SEVERE, "Failed to execute termination",e);
+        } catch (IOException e) {
+            LOGGER.log(SEVERE, "Failed to execute termination",e);
+        }
 
         Set<Future<?>> pending = new HashSet<Future<?>>();
         terminating = true;
@@ -2560,9 +2716,16 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         if(dnsMultiCast!=null)
             dnsMultiCast.close();
         interruptReloadThread();
-        Trigger.timer.cancel();
+
+        java.util.Timer timer = Trigger.timer;
+        if (timer != null) {
+            timer.cancel();
+        }
         // TODO: how to wait for the completion of the last job?
         Trigger.timer = null;
+
+        Timer.shutdown();
+
         if(tcpSlaveAgentListener!=null)
             tcpSlaveAgentListener.shutdown();
 
@@ -2630,7 +2793,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             jdks.addAll(req.bindJSONToList(JDK.class,json.get("jdks")));
 
             boolean result = true;
-            for( Descriptor<?> d : Functions.getSortedDescriptorsForGlobalConfig() )
+            for (Descriptor<?> d : Functions.getSortedDescriptorsForGlobalConfigUnclassified())
                 result &= configureDescriptor(req,json,d);
 
             version = VERSION;
@@ -2672,36 +2835,39 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     /**
-     * Accepts submission from the configuration page.
+     * Accepts submission from the node configuration page.
      */
-    public synchronized void doConfigExecutorsSubmit( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
+    @RequirePOST
+    public synchronized void doConfigExecutorsSubmit( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException, FormException {
         checkPermission(ADMINISTER);
 
         BulkChange bc = new BulkChange(this);
         try {
             JSONObject json = req.getSubmittedForm();
 
-            setNumExecutors(Integer.parseInt(req.getParameter("numExecutors")));
-            if(req.hasParameter("master.mode"))
-                mode = Mode.valueOf(req.getParameter("master.mode"));
-            else
-                mode = Mode.NORMAL;
+            MasterBuildConfiguration mbc = MasterBuildConfiguration.all().get(MasterBuildConfiguration.class);
+            if (mbc!=null)
+                mbc.configure(req,json);
 
-            setNodes(req.bindJSONToList(Slave.class,json.get("slaves")));
+            getNodeProperties().rebuild(req, json.optJSONObject("nodeProperties"), NodeProperty.all());
         } finally {
             bc.commit();
         }
 
-        rsp.sendRedirect(req.getContextPath() + '/');  // go to the top page
+        updateComputerList();
+
+        rsp.sendRedirect(req.getContextPath()+'/'+toComputer().getUrl());  // back to the computer page
     }
 
     /**
      * Accepts the new description.
      */
+    @RequirePOST
     public synchronized void doSubmitDescription( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
         getPrimaryView().doSubmitDescription(req, rsp);
     }
 
+    @RequirePOST // TODO does not seem to work on _either_ overload!
     public synchronized HttpRedirect doQuietDown() throws IOException {
         try {
             return doQuietDown(false,0);
@@ -2711,6 +2877,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     @CLIMethod(name="quiet-down")
+    @RequirePOST
     public HttpRedirect doQuietDown(
             @Option(name="-block",usage="Block until the system really quiets down and no builds are running") @QueryParameter boolean block,
             @Option(name="-timeout",usage="If non-zero, only block up to the specified number of milliseconds") @QueryParameter int timeout) throws InterruptedException, IOException {
@@ -2730,11 +2897,21 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     @CLIMethod(name="cancel-quiet-down")
+    @RequirePOST // TODO the cancel link needs to be updated accordingly
     public synchronized HttpRedirect doCancelQuietDown() {
         checkPermission(ADMINISTER);
         isQuietingDown = false;
         getQueue().scheduleMaintenance();
         return new HttpRedirect(".");
+    }
+
+    public HttpResponse doToggleCollapse() throws ServletException, IOException {
+    	final StaplerRequest request = Stapler.getCurrentRequest();
+    	final String paneId = request.getParameter("paneId");
+    	
+    	PaneStatusProperties.forCurrentUser().toggleCollapsed(paneId);
+    	
+        return HttpResponses.forwardToPreviousPage();
     }
 
     /**
@@ -2757,10 +2934,14 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         Map<String,Future<Map<String,String>>> future = new HashMap<String, Future<Map<String, String>>>();
 
         for (Computer c : getComputers()) {
-            future.put(c.getName(), RemotingDiagnostics.getThreadDumpAsync(c.getChannel()));
+            try {
+                future.put(c.getName(), RemotingDiagnostics.getThreadDumpAsync(c.getChannel()));
+            } catch(Exception e) {
+                LOGGER.info("Failed to get thread dump for node " + c.getName() + ": " + e.getMessage());
+            }
         }
 		if (toComputer() == null) {
-			future.put("master", RemotingDiagnostics.getThreadDumpAsync(MasterComputer.localChannel));
+			future.put("master", RemotingDiagnostics.getThreadDumpAsync(FilePath.localChannel));
 		}
 
         // if the result isn't available in 5 sec, ignore that.
@@ -2777,32 +2958,22 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                 r.put(e.getKey(), Collections.singletonMap("Failed to retrieve thread dump",sw.toString()));
             }
         }
-        return r;
+        return Collections.unmodifiableSortedMap(new TreeMap<String, Map<String, String>>(r));
     }
 
+    @RequirePOST
     public synchronized TopLevelItem doCreateItem( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
         return itemGroupMixIn.createTopLevelItem(req, rsp);
     }
 
     /**
-     * Creates a new job from its configuration XML. The type of the job created will be determined by
-     * what's in this XML.
      * @since 1.319
      */
     public TopLevelItem createProjectFromXML(String name, InputStream xml) throws IOException {
         return itemGroupMixIn.createProjectFromXML(name, xml);
     }
 
-    /**
-     * Copys a job.
-     *
-     * @param src
-     *      A {@link TopLevelItem} to be copied.
-     * @param name
-     *      Name of the newly created project.
-     * @return
-     *      Newly created {@link TopLevelItem}.
-     */
+
     @SuppressWarnings({"unchecked"})
     public <T extends TopLevelItem> T copy(T src, String name) throws IOException {
         return itemGroupMixIn.copy(src, name);
@@ -2814,6 +2985,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         return (T)copy((TopLevelItem)src,name);
     }
 
+    @RequirePOST
     public synchronized void doCreateView( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException, FormException {
         checkPermission(View.CREATE);
         addView(View.create(req,rsp, this));
@@ -2823,13 +2995,17 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Check if the given name is suitable as a name
      * for job, view, etc.
      *
-     * @throws ParseException
+     * @throws Failure
      *      if the given name is not good
      */
     public static void checkGoodName(String name) throws Failure {
         if(name==null || name.length()==0)
             throw new Failure(Messages.Hudson_NoName());
 
+        if(".".equals(name.trim())) 
+            throw new Failure(Messages.Jenkins_NotAllowedName("."));
+        if("..".equals(name.trim())) 
+            throw new Failure(Messages.Jenkins_NotAllowedName(".."));
         for( int i=0; i<name.length(); i++ ) {
             char ch = name.charAt(i);
             if(Character.isISOControl(ch)) {
@@ -2844,7 +3020,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     /**
      * Makes sure that the given name is good as a job name.
-     * @return trimmed name if valid; throws ParseException if not
+     * @return trimmed name if valid; throws Failure if not
      */
     private String checkJobName(String name) throws Failure {
         checkGoodName(name);
@@ -2874,6 +3050,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * @see BasicAuthenticationFilter
      */
     public void doSecured( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
+        // TODO fire something in SecurityListener? (seems to be used only for REST calls when LegacySecurityRealm is active)
+
         if(req.getUserPrincipal()==null) {
             // authentication must have failed
             rsp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -2891,12 +3069,15 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     /**
      * Called once the user logs in. Just forward to the top page.
+     * Used only by {@link LegacySecurityRealm}.
      */
     public void doLoginEntry( StaplerRequest req, StaplerResponse rsp ) throws IOException {
         if(req.getUserPrincipal()==null) {
             rsp.sendRedirect2("noPrincipal");
             return;
         }
+
+        // TODO fire something in SecurityListener?
 
         String from = req.getParameter("from");
         if(from!=null && from.startsWith("/") && !from.equals("/loginError")) {
@@ -2919,7 +3100,9 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Logs out the user.
      */
     public void doLogout( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
+        String user = getAuthentication().getName();
         securityRealm.doLogout(req, rsp);
+        SecurityListener.fireLoggedOut(user);
     }
 
     /**
@@ -2937,6 +3120,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Reloads the configuration.
      */
     @CLIMethod(name="reload-configuration")
+    @RequirePOST
     public synchronized HttpResponse doReload() throws IOException {
         checkPermission(ADMINISTER);
 
@@ -2951,7 +3135,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                     reload();
                 } catch (Exception e) {
                     LOGGER.log(SEVERE,"Failed to reload Jenkins config",e);
-                    WebApp.get(servletContext).setApp(new JenkinsReloadFailed(e));
+                    new JenkinsReloadFailed(e).publish(servletContext,root);
                 }
             }
         }.start();
@@ -2989,6 +3173,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * For debugging. Expose URL to perform GC.
      */
     @edu.umd.cs.findbugs.annotations.SuppressWarnings("DM_GC")
+    @RequirePOST
     public void doGc(StaplerResponse rsp) throws IOException {
         checkPermission(Jenkins.ADMINISTER);
         System.gc();
@@ -2997,21 +3182,45 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         rsp.getWriter().println("GCed");
     }
 
+    /**
+     * End point that intentionally throws an exception to test the error behaviour.
+     * @since 1.467
+     */
+    public void doException() {
+        throw new RuntimeException();
+    }
+
     public ContextMenu doContextMenu(StaplerRequest request, StaplerResponse response) throws IOException, JellyException {
-        return new ContextMenu().from(this,request,response);
+        ContextMenu menu = new ContextMenu().from(this, request, response);
+        for (MenuItem i : menu.items) {
+            if (i.url.equals(request.getContextPath() + "/manage")) {
+                // add "Manage Jenkins" subitems
+                i.subMenu = new ContextMenu().from(this, request, response, "manage");
+            }
+        }
+        return menu;
+    }
+
+    public ContextMenu doChildrenContextMenu(StaplerRequest request, StaplerResponse response) throws Exception {
+        ContextMenu menu = new ContextMenu();
+        for (View view : getViews()) {
+            menu.add(view.getViewUrl(),view.getDisplayName());
+        }
+        return menu;
     }
 
     /**
      * Obtains the heap dump.
      */
     public HeapDump getHeapDump() throws IOException {
-        return new HeapDump(this,MasterComputer.localChannel);
+        return new HeapDump(this,FilePath.localChannel);
     }
 
     /**
      * Simulates OutOfMemoryError.
      * Useful to make sure OutOfMemoryHeapDump setting.
      */
+    @RequirePOST
     public void doSimulateOutOfMemory() throws IOException {
         checkPermission(ADMINISTER);
 
@@ -3019,44 +3228,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         List<Object> args = new ArrayList<Object>();
         while (true)
             args.add(new byte[1024*1024]);
-    }
-
-    private transient final Map<UUID,FullDuplexHttpChannel> duplexChannels = new HashMap<UUID, FullDuplexHttpChannel>();
-
-    /**
-     * Handles HTTP requests for duplex channels for CLI.
-     */
-    public void doCli(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException, InterruptedException {
-        if (!"POST".equals(req.getMethod())) {
-            // for GET request, serve _cli.jelly, assuming this is a browser
-            checkPermission(READ);
-            req.getView(this,"_cli.jelly").forward(req,rsp);
-            return;
-        }
-
-        // do not require any permission to establish a CLI connection
-        // the actual authentication for the connecting Channel is done by CLICommand
-
-        UUID uuid = UUID.fromString(req.getHeader("Session"));
-        rsp.setHeader("Hudson-Duplex",""); // set the header so that the client would know
-
-        FullDuplexHttpChannel server;
-        if(req.getHeader("Side").equals("download")) {
-            duplexChannels.put(uuid,server=new FullDuplexHttpChannel(uuid, !hasPermission(ADMINISTER)) {
-                protected void main(Channel channel) throws IOException, InterruptedException {
-                    // capture the identity given by the transport, since this can be useful for SecurityRealm.createCliAuthenticator()
-                    channel.setProperty(CLICommand.TRANSPORT_AUTHENTICATION,getAuthentication());
-                    channel.setProperty(CliEntryPoint.class.getName(),new CliManagerImpl(channel));
-                }
-            });
-            try {
-                server.download(req,rsp);
-            } finally {
-                duplexChannels.remove(uuid);
-            }
-        } else {
-            duplexChannels.get(uuid).upload(req,rsp);
-        }
     }
 
     /**
@@ -3166,10 +3337,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
                     } else {
                         LOGGER.info("Safe-restart mode cancelled");
                     }
-                } catch (InterruptedException e) {
-                    LOGGER.log(Level.WARNING, "Failed to restart Hudson",e);
-                } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to restart Hudson",e);
+                } catch (Throwable e) {
+                    LOGGER.log(Level.WARNING, "Failed to restart Jenkins",e);
                 }
             }
         }.start();
@@ -3180,6 +3349,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * @since 1.161
      */
     @CLIMethod(name="shutdown")
+    @RequirePOST
     public void doExit( StaplerRequest req, StaplerResponse rsp ) throws IOException {
         checkPermission(ADMINISTER);
         LOGGER.severe(String.format("Shutting down VM as requested by %s from %s",
@@ -3201,6 +3371,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * @since 1.332
      */
     @CLIMethod(name="safe-shutdown")
+    @RequirePOST
     public HttpResponse doSafeExit(StaplerRequest req) throws IOException {
         checkPermission(ADMINISTER);
         isQuietingDown = true;
@@ -3236,7 +3407,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Gets the {@link Authentication} object that represents the user
      * associated with the current request.
      */
-    public static Authentication getAuthentication() {
+    public static @Nonnull Authentication getAuthentication() {
         Authentication a = SecurityContextHolder.getContext().getAuthentication();
         // on Tomcat while serving the login page, this is null despite the fact
         // that we have filters. Looking at the stack trace, Tomcat doesn't seem to
@@ -3252,25 +3423,31 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * Run arbitrary Groovy script.
      */
     public void doScript(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        doScript(req, rsp, req.getView(this, "_script.jelly"));
+        _doScript(req, rsp, req.getView(this, "_script.jelly"), FilePath.localChannel, getACL());
     }
 
     /**
      * Run arbitrary Groovy script and return result as plain text.
      */
     public void doScriptText(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        doScript(req, rsp, req.getView(this, "_scriptText.jelly"));
+        _doScript(req, rsp, req.getView(this, "_scriptText.jelly"), FilePath.localChannel, getACL());
     }
 
-    private void doScript(StaplerRequest req, StaplerResponse rsp, RequestDispatcher view) throws IOException, ServletException {
+    /**
+     * @since 1.509.1
+     */
+    public static void _doScript(StaplerRequest req, StaplerResponse rsp, RequestDispatcher view, VirtualChannel channel, ACL acl) throws IOException, ServletException {
         // ability to run arbitrary script is dangerous
-        checkPermission(RUN_SCRIPTS);
+        acl.checkPermission(RUN_SCRIPTS);
 
         String text = req.getParameter("script");
         if (text != null) {
+            if (!"POST".equals(req.getMethod())) {
+                throw HttpResponses.error(HttpURLConnection.HTTP_BAD_METHOD, "requires POST");
+            }
             try {
                 req.setAttribute("output",
-                        RemotingDiagnostics.executeGroovy(text, MasterComputer.localChannel));
+                        RemotingDiagnostics.executeGroovy(text, channel));
             } catch (InterruptedException e) {
                 throw new ServletException(e);
             }
@@ -3286,7 +3463,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      */
     @RequirePOST
     public void doEval(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        checkPermission(ADMINISTER);
+        checkPermission(RUN_SCRIPTS);
 
         try {
             MetaClass mc = WebApp.getCurrent().getMetaClass(getClass());
@@ -3309,9 +3486,9 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      */
     public void doIconSize( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
         String qs = req.getQueryString();
-        if(qs==null || !ICON_SIZE.matcher(qs).matches())
+        if(qs==null)
             throw new ServletException();
-        Cookie cookie = new Cookie("iconSize", qs);
+        Cookie cookie = new Cookie("iconSize", Functions.validateIconSize(qs));
         cookie.setMaxAge(/* ~4 mo. */9999999); // #762
         rsp.addCookie(cookie);
         String ref = req.getHeader("Referer");
@@ -3319,6 +3496,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         rsp.sendRedirect2(ref);
     }
 
+    @RequirePOST
     public void doFingerprintCleanup(StaplerResponse rsp) throws IOException {
         FingerprintCleanupThread.invoke();
         rsp.setStatus(HttpServletResponse.SC_OK);
@@ -3326,6 +3504,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         rsp.getWriter().println("Invoked");
     }
 
+    @RequirePOST
     public void doWorkspaceCleanup(StaplerResponse rsp) throws IOException {
         WorkspaceCleanupThread.invoke();
         rsp.setStatus(HttpServletResponse.SC_OK);
@@ -3369,7 +3548,33 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
     }
 
     /**
+     * Checks if a top-level view with the given name exists and 
+     * make sure that the name is good as a view name.
+     */
+    public FormValidation doCheckViewName(@QueryParameter String value) {
+        checkPermission(View.CREATE);
+        
+        String name = fixEmpty(value);
+        if (name == null) 
+            return FormValidation.ok();
+        
+        // already exists?
+        if (getView(name) != null) 
+            return FormValidation.error(Messages.Hudson_ViewAlreadyExists(name));
+        
+        // good view name?
+        try {
+            checkGoodName(name);
+        } catch (Failure e) {
+            return FormValidation.error(e.getMessage());
+        }
+
+        return FormValidation.ok();
+    }
+    
+    /**
      * Checks if a top-level view with the given name exists.
+     * @deprecated 1.512
      */
     public FormValidation doViewExistsCheck(@QueryParameter String value) {
         checkPermission(View.CREATE);
@@ -3448,6 +3653,29 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         // volatile acts a as a memory barrier here and therefore guarantees 
         // that graph is fully build, before it's visible to other threads
         dependencyGraph = graph;
+        dependencyGraphDirty.set(false);
+    }
+
+    /**
+     * Rebuilds the dependency map asynchronously.
+     *
+     * <p>
+     * This would keep the UI thread more responsive and helps avoid the deadlocks,
+     * as dependency graph recomputation tends to touch a lot of other things.
+     *
+     * @since 1.522
+     */
+    public Future<DependencyGraph> rebuildDependencyGraphAsync() {
+        dependencyGraphDirty.set(true);
+        return Timer.get().schedule(new java.util.concurrent.Callable<DependencyGraph>() {
+            @Override
+            public DependencyGraph call() throws Exception {
+                if (dependencyGraphDirty.get()) {
+                    rebuildDependencyGraph();
+                }
+                return dependencyGraph;
+            }
+        }, 500, TimeUnit.MILLISECONDS);
     }
 
     public DependencyGraph getDependencyGraph() {
@@ -3489,25 +3717,44 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             || rest.startsWith("/logout")
             || rest.startsWith("/accessDenied")
             || rest.startsWith("/adjuncts/")
+            || rest.startsWith("/error")
+            || rest.startsWith("/oops")
             || rest.startsWith("/signup")
-            || rest.startsWith("/jnlpJars/")
             || rest.startsWith("/tcpSlaveAgentListener")
-            || rest.startsWith("/cli")
-            || rest.startsWith("/whoAmI")
+            // TODO SlaveComputer.doSlaveAgentJnlp; there should be an annotation to request unprotected access
+            || rest.matches("/computer/[^/]+/slave-agent[.]jnlp") && "true".equals(Stapler.getCurrentRequest().getParameter("encrypt"))
             || rest.startsWith("/federatedLoginService/")
             || rest.startsWith("/securityRealm"))
                 return this;    // URLs that are always visible without READ permission
 
-            for (Action a : getActions()) {
-                if (a instanceof UnprotectedRootAction) {
-                    if (rest.startsWith("/"+a.getUrlName()+"/"))
-                        return this;
+            for (String name : getUnprotectedRootActions()) {
+                if (rest.startsWith("/" + name + "/") || rest.equals("/" + name)) {
+                    return this;
                 }
             }
 
             throw e;
         }
         return this;
+    }
+
+    /**
+     * Gets a list of unprotected root actions.
+     * These URL prefixes should be exempted from access control checks by container-managed security.
+     * Ideally would be synchronized with {@link #getTarget}.
+     * @return a list of {@linkplain Action#getUrlName URL names}
+     * @since 1.495
+     */
+    public Collection<String> getUnprotectedRootActions() {
+        Set<String> names = new TreeSet<String>();
+        names.add("jnlpJars"); // TODO cleaner to refactor doJnlpJars into a URA
+        // TODO consider caching (expiring cache when actions changes)
+        for (Action a : getActions()) {
+            if (a instanceof UnprotectedRootAction) {
+                names.add(a.getUrlName());
+            }
+        }
+        return names;
     }
 
     /**
@@ -3524,7 +3771,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * if the user sets the displayName to what it currently is.
      * @param displayName
      * @param currentJobName
-     * @return
      */
     boolean isDisplayNameUnique(String displayName, String currentJobName) {
         Collection<TopLevelItem> itemCollection = items.values();
@@ -3550,7 +3796,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * True if there is no item in Jenkins that has this name
      * @param name The name to test
      * @param currentJobName The name of the job that the user is configuring
-     * @return
      */
     boolean isNameUnique(String name, String currentJobName) {
         Item item = getItem(name);
@@ -3575,7 +3820,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      * existing display names or project names
      * @param displayName The display name to test
      * @param jobName The name of the job the user is configuring
-     * @return
      */
     public FormValidation doCheckDisplayName(@QueryParameter String displayName, 
             @QueryParameter String jobName) {
@@ -3634,6 +3878,15 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         }
 
         /**
+         * Will always keep this guy alive so that it can function as a fallback to
+         * execute {@link FlyweightTask}s. See JENKINS-7291.
+         */
+        @Override
+        protected boolean isAlive() {
+            return true;
+        }
+
+        /**
          * Report an error.
          */
         @Override
@@ -3642,9 +3895,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         }
 
         @Override
-        public void doConfigSubmit(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-            // the master node isn't in the Hudson.getNodes(), so this method makes no sense.
-            throw new UnsupportedOperationException();
+        public void doConfigSubmit(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException, FormException {
+            Jenkins.getInstance().doConfigExecutorsSubmit(req, rsp);
         }
 
         @Override
@@ -3659,7 +3911,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
         @Override
         public VirtualChannel getChannel() {
-            return localChannel;
+            return FilePath.localChannel;
         }
 
         @Override
@@ -3671,17 +3923,11 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
             return logRecords;
         }
 
+        @RequirePOST
         public void doLaunchSlaveAgent(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
             // this computer never returns null from channel, so
             // this method shall never be invoked.
             rsp.sendError(SC_NOT_FOUND);
-        }
-
-        /**
-         * Redirect the master configuration to /configure.
-         */
-        public void doConfigure(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-            rsp.sendRedirect2(req.getContextPath()+"/configure");
         }
 
         protected Future<?> _connect(boolean forceReconnect) {
@@ -3690,15 +3936,19 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
         /**
          * {@link LocalChannel} instance that can be used to execute programs locally.
+         *
+         * @deprecated as of 1.558
+         *      Use {@link FilePath#localChannel}
          */
-        public static final LocalChannel localChannel = new LocalChannel(threadPoolForRemoting);
+        public static final LocalChannel localChannel = FilePath.localChannel;
     }
 
     /**
-     * Shortcut for {@code Hudson.getInstance().lookup.get(type)}
+     * Shortcut for {@code Jenkins.getInstance().lookup.get(type)}
      */
-    public static <T> T lookup(Class<T> type) {
-        return Jenkins.getInstance().lookup.get(type);
+    public static @CheckForNull <T> T lookup(Class<T> type) {
+        Jenkins j = Jenkins.getInstance();
+        return j != null ? j.lookup.get(type) : null;
     }
 
     /**
@@ -3725,18 +3975,21 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
      */
     /*package*/ transient final ExecutorService threadPoolForLoad = new ThreadPoolExecutor(
         TWICE_CPU_NUM, TWICE_CPU_NUM,
-        5L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(), new DaemonThreadFactory());
+        5L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(), new NamingThreadFactory(new DaemonThreadFactory(), "Jenkins load"));
 
 
     private static void computeVersion(ServletContext context) {
         // set the version
         Properties props = new Properties();
+        InputStream is = null;
         try {
-            InputStream is = Jenkins.class.getResourceAsStream("jenkins-version.properties");
+            is = Jenkins.class.getResourceAsStream("jenkins-version.properties");
             if(is!=null)
                 props.load(is);
         } catch (IOException e) {
             e.printStackTrace(); // if the version properties is missing, that's OK.
+        } finally {
+            IOUtils.closeQuietly(is);
         }
         String ver = props.getProperty("version");
         if(ver==null)   ver="?";
@@ -3800,7 +4053,7 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     /**
      * Prefix to static resources like images and javascripts in the war file.
-     * Either "" or strings like "/static/VERSION", which avoids Hudson to pick up
+     * Either "" or strings like "/static/VERSION", which avoids Jenkins to pick up
      * stale cache when the user upgrades to a different version.
      * <p>
      * Value computed in {@link WebAppMain}.
@@ -3818,7 +4071,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     public static boolean PARALLEL_LOAD = Configuration.getBooleanConfigParameter("parallelLoad", true);
     public static boolean KILL_AFTER_LOAD = Configuration.getBooleanConfigParameter("killAfterLoad", false);
-    private static final boolean CONSISTENT_HASH = true; // Boolean.getBoolean(Hudson.class.getName()+".consistentHash");
     /**
      * Enabled by default as of 1.337. Will keep it for a while just in case we have some serious problems.
      */
@@ -3847,8 +4099,6 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
 
     private static final Logger LOGGER = Logger.getLogger(Jenkins.class.getName());
 
-    private static final Pattern ICON_SIZE = Pattern.compile("\\d+x\\d+");
-
     public static final PermissionGroup PERMISSIONS = Permission.HUDSON_PERMISSIONS;
     public static final Permission ADMINISTER = Permission.HUDSON_ADMINISTER;
     public static final Permission READ = new Permission(PERMISSIONS,"Read",Messages._Hudson_ReadPermission_Description(),Permission.READ,PermissionScope.JENKINS);
@@ -3871,6 +4121,8 @@ public class Jenkins extends AbstractCIBase implements ModifiableItemGroup<TopLe
         // for backward compatibility with <1.75, recognize the tag name "view" as well.
         XSTREAM.alias("view", ListView.class);
         XSTREAM.alias("listView", ListView.class);
+        XSTREAM2.addCriticalField(Jenkins.class, "securityRealm");
+        XSTREAM2.addCriticalField(Jenkins.class, "authorizationStrategy");
         // this seems to be necessary to force registration of converter early enough
         Mode.class.getEnumConstants();
 

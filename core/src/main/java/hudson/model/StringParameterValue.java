@@ -52,7 +52,7 @@ public class StringParameterValue extends ParameterValue {
      * Exposes the name/value as an environment variable.
      */
     @Override
-    public void buildEnvVars(AbstractBuild<?,?> build, EnvVars env) {
+    public void buildEnvironment(Run<?,?> build, EnvVars env) {
         env.put(name,value);
         env.put(name.toUpperCase(Locale.ENGLISH),value); // backward compatibility pre 1.345
     }
@@ -96,4 +96,9 @@ public class StringParameterValue extends ParameterValue {
     public String toString() {
     	return "(StringParameterValue) " + getName() + "='" + value + "'";
     }
+
+    @Override public String getShortDescription() {
+        return name + '=' + value;
+    }
+
 }

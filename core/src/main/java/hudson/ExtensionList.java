@@ -157,25 +157,42 @@ public class ExtensionList<T> extends AbstractList<T> {
         return ensureLoaded().size();
     }
 
-    @Override
-    public synchronized boolean remove(Object o) {
-        removeComponent(legacyInstances,o);
-        if(extensions!=null) {
-            List<ExtensionComponent<T>> r = new ArrayList<ExtensionComponent<T>>(extensions);
-            removeComponent(r,o);
-            extensions = sort(r);
-        }
-        return true;
+    /**
+     * Gets the read-only view of this {@link ExtensionList} where components are reversed.
+     */
+    public List<T> reverseView() {
+        return new AbstractList<T>() {
+            @Override
+            public T get(int index) {
+                return ExtensionList.this.get(size()-index-1);
+            }
+
+            @Override
+            public int size() {
+                return ExtensionList.this.size();
+            }
+        };
     }
 
-    private <T> void removeComponent(Collection<ExtensionComponent<T>> collection, Object t) {
+    @Override
+    public synchronized boolean remove(Object o) {
+        boolean removed = removeComponent(legacyInstances, o);
+        if(extensions!=null) {
+            List<ExtensionComponent<T>> r = new ArrayList<ExtensionComponent<T>>(extensions);
+            removed |= removeComponent(r,o);
+            extensions = sort(r);
+        }
+        return removed;
+    }
+
+    private <T> boolean removeComponent(Collection<ExtensionComponent<T>> collection, Object t) {
         for (Iterator<ExtensionComponent<T>> itr = collection.iterator(); itr.hasNext();) {
             ExtensionComponent<T> c =  itr.next();
             if (c.getInstance().equals(t)) {
-                collection.remove(c);
-                return;
+                return collection.remove(c);
             }
         }
+        return false;
     }
 
     @Override
