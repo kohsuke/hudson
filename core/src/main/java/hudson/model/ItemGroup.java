@@ -23,9 +23,11 @@
  */
 package hudson.model;
 
+import hudson.model.listeners.ItemListener;
 import java.io.IOException;
 import java.util.Collection;
 import java.io.File;
+import javax.annotation.CheckForNull;
 
 /**
  * Represents a grouping inherent to a kind of {@link Item}s.
@@ -64,9 +66,9 @@ public interface ItemGroup<T extends Item> extends PersistenceRoot, ModelObject 
     String getUrlChildPrefix();
 
     /**
-     * Gets the {@link Item} inside this group that has a given name.
+     * Gets the {@link Item} inside this group that has a given name, or null if it does not exist.
      */
-    T getItem(String name);
+    @CheckForNull T getItem(String name);
 
     /**
      * Assigns the {@link Item#getRootDir() root directory} for children.
@@ -75,6 +77,7 @@ public interface ItemGroup<T extends Item> extends PersistenceRoot, ModelObject 
 
     /**
      * Internal method. Called by {@link Item}s when they are renamed by users.
+     * This is <em>not</em> expected to call {@link ItemListener#onRenamed}, inconsistent with {@link #onDeleted}.
      */
     void onRenamed(T item, String oldName, String newName) throws IOException;
 

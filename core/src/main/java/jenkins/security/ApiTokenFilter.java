@@ -5,6 +5,8 @@ import hudson.security.ACL;
 import hudson.util.Scrambler;
 import org.acegisecurity.context.SecurityContext;
 import org.acegisecurity.context.SecurityContextHolder;
+import org.acegisecurity.userdetails.UsernameNotFoundException;
+import org.springframework.dao.DataAccessException;
 
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -47,14 +49,23 @@ public class ApiTokenFilter implements Filter {
                 User u = User.get(username);
                 ApiTokenProperty t = u.getProperty(ApiTokenProperty.class);
                 if (t!=null && t.matchesPassword(password)) {
-                    // even if we fail to match the password, we aren't rejecting it.
-                    // as the user might be passing in a real password.
-                    SecurityContext oldContext = ACL.impersonate(u.impersonate());
                     try {
-                        chain.doFilter(request,response);
+                        // even if we fail to match the password, we aren't rejecting it.
+                        // as the user might be passing in a real password.
+                        SecurityContext oldContext = ACL.impersonate(u.impersonate());
+                        try {
+                            request.setAttribute(ApiTokenProperty.class.getName(), u);
+                            chain.doFilter(request,response);
+                            return;
+                        } finally {
+                            SecurityContextHolder.setContext(oldContext);
+                        }
+                    } catch (UsernameNotFoundException x) {
+                        // Not/no longer a user; deny the API token. (But do not leak the information that this happened.)
+                        chain.doFilter(request, response);
                         return;
-                    } finally {
-                        SecurityContextHolder.setContext(oldContext);
+                    } catch (DataAccessException x) {
+                        throw new ServletException(x);
                     }
                 }
             }

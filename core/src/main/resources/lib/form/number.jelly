@@ -28,10 +28,10 @@ THE SOFTWARE.
     Generates an input field <tt>&lt;input type="number" ... /></tt> to be
     used inside &lt;f:entry/>
 
-    <st:attribute name="field">
+    <st:attribute name="field" type="java.lang.String">
       Used for databinding. TBD.
     </st:attribute>
-    <st:attribute name="name">
+    <st:attribute name="name" type="java.lang.String">
       This becomes @name of the &lt;input> tag.
       If @field is specified, this value is inferred from it.
     </st:attribute>
@@ -69,10 +69,16 @@ THE SOFTWARE.
     INPUT.number (defined in hudson-behavior.js) is a class for integers.
     On the other hand, HTML5 <input> permits floating-point numbers.
   -->
+  <j:set var="name" value="${attrs.name ?: '_.'+attrs.field}"/>
+  <j:set var="default" value="${attrs.default ?: ''}"/>
+  <j:set var="value" value="${attrs.value ?: instance[attrs.field] ?: default}"/>
   <m:input xmlns:m="jelly:hudson.util.jelly.MorphTagLibrary"
          class="setting-input ${attrs.checkUrl!=null?'validated':''} ${attrs.clazz}"
-         name="${attrs.name ?: '_.'+attrs.field}"
-         value="${attrs.value ?: instance[attrs.field] ?: attrs.default}"
+         name="${name}"
+         value="${value}"
          type="number"
          ATTRIBUTES="${attrs}" EXCEPT="field clazz" />
+  <j:if test="${customizedFields != null and attrs.field != null and value != default}">
+    <j:mute>${customizedFields.add(name)}</j:mute>
+  </j:if>
 </j:jelly>

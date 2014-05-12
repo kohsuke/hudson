@@ -24,12 +24,15 @@
 
 package hudson;
 
+import hudson.model.StreamBuildListener;
+import hudson.model.TaskListener;
+import hudson.remoting.Callable;
 import hudson.util.ProcessTree;
 import hudson.util.StreamTaskListener;
-import hudson.remoting.Callable;
 import org.apache.commons.io.FileUtils;
 import org.jvnet.hudson.test.Bug;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 
 public class LauncherTest extends ChannelTestCase {
@@ -75,4 +78,42 @@ public class LauncherTest extends ChannelTestCase {
             return null;
         }
     };
+
+    @Bug(15733)
+    public void testDecorateByEnv() throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        TaskListener l = new StreamBuildListener(baos);
+        Launcher base = new Launcher.LocalLauncher(l);
+        EnvVars env = new EnvVars("key1", "val1");
+        Launcher decorated = base.decorateByEnv(env);
+        int res = decorated.launch().envs("key2=val2").cmds(Functions.isWindows() ? new String[] {"cmd", "/q", "/c", "echo %key1% %key2%"} : new String[] {"sh", "-c", "echo $key1 $key2"}).stdout(l).join();
+        String log = baos.toString();
+        assertEquals(log, 0, res);
+        assertTrue(log, log.contains("val1 val2"));
+    }
+
+    @Bug(18368)
+    public void testDecoratedByEnvMaintainsIsUnix() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        TaskListener listener = new StreamBuildListener(output);
+        Launcher remoteLauncher = new Launcher.RemoteLauncher(listener, FilePath.localChannel, false);
+        Launcher decorated = remoteLauncher.decorateByEnv(new EnvVars());
+        assertEquals(false, decorated.isUnix());
+        remoteLauncher = new Launcher.RemoteLauncher(listener, FilePath.localChannel, true);
+        decorated = remoteLauncher.decorateByEnv(new EnvVars());
+        assertEquals(true, decorated.isUnix());
+    }
+
+    @Bug(18368)
+    public void testDecoratedByPrefixMaintainsIsUnix() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        TaskListener listener = new StreamBuildListener(output);
+        Launcher remoteLauncher = new Launcher.RemoteLauncher(listener, FilePath.localChannel, false);
+        Launcher decorated = remoteLauncher.decorateByPrefix("test");
+        assertEquals(false, decorated.isUnix());
+        remoteLauncher = new Launcher.RemoteLauncher(listener, FilePath.localChannel, true);
+        decorated = remoteLauncher.decorateByPrefix("test");
+        assertEquals(true, decorated.isUnix());
+    }
+
 }

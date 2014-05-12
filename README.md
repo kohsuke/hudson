@@ -2,7 +2,7 @@
 
 Jenkins CI
 ==========
-Copyright &copy; 2004-, Kohsuke Kawaguchi, Sun Microsystems, Inc., and a number of other of contributers. Licensed under [MIT License].
+Copyright © 2004–, Kohsuke Kawaguchi, Sun Microsystems, Inc., and a number of other of contributors. Licensed under [MIT License].
 
 About
 -----
@@ -26,4 +26,3 @@ All about Jenkins CI can be found on our [website]. Follow us on Twitter @[jenki
 [GitHub]: https://github.com/jenkinsci/jenkins
 [website]: http://jenkins-ci.org
 [jenkinsci]: http://twitter.com/jenkinsci
-

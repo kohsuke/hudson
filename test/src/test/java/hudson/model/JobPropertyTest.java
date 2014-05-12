@@ -42,18 +42,18 @@ public class JobPropertyTest extends HudsonTestCase {
      */
     @Bug(2398)
     public void testJobPropertySummaryIsShownInMavenModuleSetIndexPage() throws Exception {
-        assertJobPropertySummaryIsShownInIndexPage(MavenModuleSet.DESCRIPTOR);
+        assertJobPropertySummaryIsShownInIndexPage(MavenModuleSet.class);
     }
     public void testJobPropertySummaryIsShownInMatrixProjectIndexPage() throws Exception {
-        assertJobPropertySummaryIsShownInIndexPage(MatrixProject.DESCRIPTOR);
+        assertJobPropertySummaryIsShownInIndexPage(MatrixProject.class);
     }
     public void testJobPropertySummaryIsShownInFreeStyleProjectIndexPage() throws Exception {
-        assertJobPropertySummaryIsShownInIndexPage(FreeStyleProject.DESCRIPTOR);
+        assertJobPropertySummaryIsShownInIndexPage(FreeStyleProject.class);
     }
 
-    private void assertJobPropertySummaryIsShownInIndexPage(TopLevelItemDescriptor type) throws Exception {
+    private void assertJobPropertySummaryIsShownInIndexPage(Class<? extends TopLevelItem> type) throws Exception {
         JobPropertyImpl jp = new JobPropertyImpl("NeedleInPage");
-        Job<?,?> project = (Job<?, ?>) hudson.createProject(type, "job-test-case");
+        Job<?,?> project = (Job<?, ?>) jenkins.createProject(type, "job-test-case");
         project.addProperty(jp);
         
         HtmlPage page = new WebClient().goTo("job/job-test-case");
