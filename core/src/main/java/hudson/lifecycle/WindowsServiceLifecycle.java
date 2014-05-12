@@ -126,7 +126,7 @@ public class WindowsServiceLifecycle extends Lifecycle {
         File executable = new File(home, "hudson.exe");
         if (!executable.exists())   executable = new File(home, "jenkins.exe");
 
-        int r = new LocalLauncher(task).launch().cmds(executable, "restart")
+        int r = new LocalLauncher(task).launch().cmds(executable, "restart!")
                 .stdout(task).pwd(home).join();
         if(r!=0)
             throw new IOException(baos.toString());
