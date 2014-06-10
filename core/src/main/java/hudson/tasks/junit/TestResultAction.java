@@ -24,6 +24,7 @@
 package hudson.tasks.junit;
 
 import com.thoughtworks.xstream.XStream;
+
 import hudson.XmlFile;
 import hudson.model.AbstractBuild;
 import hudson.model.Action;
@@ -32,6 +33,9 @@ import hudson.tasks.test.AbstractTestResultAction;
 import hudson.tasks.test.TestObject;
 import hudson.util.HeapSpaceStringConverter;
 import hudson.util.XStream2;
+
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.StaplerProxy;
 
 import java.io.File;
@@ -62,9 +66,15 @@ public class TestResultAction extends AbstractTestResultAction<TestResultAction>
     private Integer totalCount;
     private List<Data> testData = new ArrayList<Data>();
 
+    @Deprecated
     public TestResultAction(AbstractBuild owner, TestResult result, BuildListener listener) {
         super(owner);
         setResult(result, listener);
+    }
+
+    @Restricted(NoExternalUse.class)
+    public TestResultAction(TestResult result, BuildListener listener) {
+        this(null, result, listener);
     }
 
     /**

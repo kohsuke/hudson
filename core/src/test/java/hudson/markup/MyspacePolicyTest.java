@@ -34,20 +34,18 @@ public class MyspacePolicyTest extends Assert {
         assertIntact("<table><tr><th>header</th></tr><tr><td>something</td></tr></table>");
         assertIntact("<h1>title</h1><blockquote>blurb</blockquote>");
 
-        assertIntact("<iframe src='nested'></iframe>");
-        assertIntact("<iframe src='http://kohsuke.org'></iframe>");
-        assertReject("javascript","<iframe src='javascript:foo'></iframe>");
+        assertReject("iframe", "<iframe src='nested'></iframe>");
 
         assertReject("script","<script>window.alert(5);</script>");
         assertReject("script","<script src='http://foo/evil.js'></script>");
         assertReject("script","<script src='relative.js'></script>");
 
         assertIntact("<style>H1 { display:none; }</style>");
-        assertIntact("<link rel='stylesheet' type='text/css' href='http://www.microsoft.com/'>");
+        assertReject("link", "<link rel='stylesheet' type='text/css' href='http://www.microsoft.com/'>");
         assertIntact("<div style='background-color:white'>inline CSS</div>");
         assertIntact("<br><hr>");
 
-        assertIntact("<form method='post' action='http://sun.com/'><input type='text' name='foo'><input type='password' name='pass'></form>");
+        assertReject("sun.com", "<form method='post' action='http://sun.com/'><input type='text' name='foo'><input type='password' name='pass'></form>");
     }
 
     private void assertIntact(String input) {

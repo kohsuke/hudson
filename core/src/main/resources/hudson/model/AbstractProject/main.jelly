@@ -25,8 +25,13 @@ THE SOFTWARE.
 
 <?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:i="jelly:fmt" xmlns:p="/lib/hudson/project">
-  <p:projectActionFloatingBox />
 
+  <j:if test="${it.supportsMakeDisabled()}">
+    <st:include page="makeDisabled.jelly" />
+  </j:if>
+
+  <p:projectActionFloatingBox />
+  
   <table style="margin-top: 1em; margin-left:1em;">
 
     <j:forEach var="act" items="${it.prominentActions}">
@@ -50,8 +55,7 @@ THE SOFTWARE.
     <j:if test="${tr!=null}">
       <j:if test="${tr.class.name != 'hudson.tasks.test.AggregatedTestResultAction'}">
         <t:summary icon="clipboard.png">
-          <a href="lastCompletedBuild/testReport/" class="model-link">${%Latest Test Result}</a>
-          <st:nbsp/>
+          <a href="lastCompletedBuild/${tr.urlName}/" class="model-link inside">${%Latest Test Result}</a>
           <t:test-result it="${tr}" />
         </t:summary>
       </j:if>
@@ -60,8 +64,7 @@ THE SOFTWARE.
     <j:set var="atr" value="${it.lastCompletedBuild.aggregatedTestResultAction}"/>
     <j:if test="${atr!=null}">
       <t:summary icon="clipboard.png">
-        <a href="lastCompletedBuild/aggregatedTestReport/" class="model-link">${%Latest Aggregated Test Result}</a>
-        <st:nbsp/>
+        <a href="lastCompletedBuild/aggregatedTestReport/" class="model-link inside">${%Latest Aggregated Test Result}</a>
         <t:test-result it="${atr}" />
       </t:summary>
     </j:if>

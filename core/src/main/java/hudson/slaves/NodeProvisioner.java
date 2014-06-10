@@ -52,21 +52,55 @@ public class NodeProvisioner {
     /**
      * The node addition activity in progress.
      */
-    public static final class PlannedNode {
+    public static class PlannedNode {
         /**
          * Used to display this planned node to UI. Should ideally include the identifier unique to the node
          * being provisioned (like the instance ID), but if such an identifier doesn't readily exist, this
          * can be just a name of the template being provisioned (like the machine image ID.)
          */
         public final String displayName;
+
+        /**
+         * Used to launch and return a {@link Node} object. {@link NodeProvisioner} will check
+         * this {@link Future}'s isDone() method to determine when to finalize this object.
+         */
         public final Future<Node> future;
+
+        /**
+         * The number of executors that will be provided by the {@link Node} launched by
+         * this object. This is used for capacity planning in {@link NodeProvisioner#update}.
+         */
         public final int numExecutors;
 
+        /**
+         * Construct a PlannedNode instance without {@link Cloud} callback for finalization.
+         *
+         * @param displayName Used to display this object in the UI.
+         * @param future Used to launch a @{link Node} object.
+         * @param numExecutors The number of executors that will be provided by the launched {@link Node}.
+         */
         public PlannedNode(String displayName, Future<Node> future, int numExecutors) {
             if(displayName==null || future==null || numExecutors<1)  throw new IllegalArgumentException();
             this.displayName = displayName;
             this.future = future;
             this.numExecutors = numExecutors;
+        }
+
+        /**
+         * Indicate that this {@link PlannedNode} is being finalized.
+         *
+         * <p>
+         * {@link NodeProvisioner} will call this method when it's done with {@link PlannedNode}.
+         * This indicates that the {@link PlannedNode}'s work has been completed
+         * (successfully or otherwise) and it is about to be removed from the list of pending
+         * {@link Node}s to be launched.
+         *
+         * <p>
+         * Create a subtype of this class and override this method to add any necessary behaviour.
+         *
+         * @since 1.503
+         */
+        public void spent() {
         }
     }
 
@@ -143,15 +177,26 @@ public class NodeProvisioner {
             PlannedNode f = itr.next();
             if(f.future.isDone()) {
                 try {
-                    hudson.addNode(f.future.get());
+                    Node node = f.future.get();
+                    for (CloudProvisioningListener cl : CloudProvisioningListener.all())
+                        cl.onComplete(f,node);
+
+                    hudson.addNode(node);
                     LOGGER.info(f.displayName+" provisioning successfully completed. We have now "+hudson.getComputers().length+" computer(s)");
                 } catch (InterruptedException e) {
                     throw new AssertionError(e); // since we confirmed that the future is already done
                 } catch (ExecutionException e) {
                     LOGGER.log(Level.WARNING, "Provisioned slave "+f.displayName+" failed to launch",e.getCause());
+                    for (CloudProvisioningListener cl : CloudProvisioningListener.all())
+                        cl.onFailure(f,e.getCause());
                 } catch (IOException e) {
                     LOGGER.log(Level.WARNING, "Provisioned slave "+f.displayName+" failed to launch",e);
+                    for (CloudProvisioningListener cl : CloudProvisioningListener.all())
+                        cl.onFailure(f,e);
                 }
+
+                f.spent();
+
                 itr.remove();
             } else
                 plannedCapacitySnapshot += f.numExecutors;
@@ -213,6 +258,8 @@ public class NodeProvisioner {
             float m = calcThresholdMargin(totalSnapshot);
             if(excessWorkload>1-m) {// and there's more work to do...
                 LOGGER.fine("Excess workload "+excessWorkload+" detected. (planned capacity="+plannedCapacity+",Qlen="+qlen+",idle="+idle+"&"+idleSnapshot+",total="+totalSnapshot+"m,="+m+")");
+
+            CLOUD:
                 for( Cloud c : hudson.clouds ) {
                     if(excessWorkload<0)    break;  // enough slaves allocated
 
@@ -223,8 +270,19 @@ public class NodeProvisioner {
                         // OTOH, because of the exponential decay, even when we need one slave, excess workload is always
                         // something like 0.95, in which case we want to allocate one node.
                         // so the threshold here is 1-MARGIN, and hence floor(excessWorkload+MARGIN) is needed to handle this.
-                        
-                        Collection<PlannedNode> additionalCapacities = c.provision(label, (int)Math.round(Math.floor(excessWorkload+m)));
+
+                        int workloadToProvision = (int) Math.round(Math.floor(excessWorkload + m));
+
+                        for (CloudProvisioningListener cl : CloudProvisioningListener.all())
+                            // consider displaying reasons in a future cloud ux
+                            if (cl.canProvision(c,label,workloadToProvision) != null)
+                                break CLOUD;
+
+                        Collection<PlannedNode> additionalCapacities = c.provision(label, workloadToProvision);
+
+                        for (CloudProvisioningListener cl : CloudProvisioningListener.all())
+                            cl.onStarted(c, label, additionalCapacities);
+
                         for (PlannedNode ac : additionalCapacities) {
                             excessWorkload -= ac.numExecutors;
                             LOGGER.info("Started provisioning "+ac.displayName+" from "+c.name+" with "+ac.numExecutors+" executors. Remaining excess workload:"+excessWorkload);

@@ -41,7 +41,7 @@ import java.io.IOException;
  * Checks the swap space availability.
  *
  * @author Kohsuke Kawaguchi
- * @sine 1.233
+ * @since 1.233
  */
 public class SwapSpaceMonitor extends NodeMonitor {
     /**
@@ -78,9 +78,10 @@ public class SwapSpaceMonitor extends NodeMonitor {
     }
 
     @Extension
-    public static final AbstractNodeMonitorDescriptor<MemoryUsage> DESCRIPTOR = new AbstractNodeMonitorDescriptor<MemoryUsage>() {
-        protected MemoryUsage monitor(Computer c) throws IOException, InterruptedException {
-            return c.getChannel().call(new MonitorTask());
+    public static final AbstractNodeMonitorDescriptor<MemoryUsage> DESCRIPTOR = new AbstractAsyncNodeMonitorDescriptor<MemoryUsage>() {
+        @Override
+        protected MonitorTask createCallable(Computer c) {
+            return new MonitorTask();
         }
 
         public String getDisplayName() {
@@ -102,15 +103,20 @@ public class SwapSpaceMonitor extends NodeMonitor {
             try {
                 mm = MemoryMonitor.get();
             } catch (IOException e) {
-                if(!warned) {
-                    // report the problem just once, and avoid filling up the log with the same error. see HUDSON-2194.
-                    warned = true;
-                    throw e;
-                } else {
-                    return null;
-                }
+                return report(e);
+            } catch (LinkageError e) { // JENKINS-15796
+                return report(e);
             }
             return new MemoryUsage2(mm.monitor());
+        }
+
+        private <T extends Throwable> MemoryUsage report(T e) throws T {
+            if (!warned) {
+                warned = true;
+                throw e;
+            } else { // JENKINS-2194
+                return null;
+            }
         }
 
         private static final long serialVersionUID = 1L;

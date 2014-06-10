@@ -33,7 +33,7 @@ import hudson.model.Action;
 import hudson.model.AutoCompletionCandidates;
 import hudson.model.BuildListener;
 import hudson.model.Cause.UpstreamCause;
-import hudson.model.DependecyDeclarer;
+import jenkins.model.DependencyDeclarer;
 import hudson.model.DependencyGraph;
 import hudson.model.DependencyGraph.Dependency;
 import jenkins.model.Jenkins;
@@ -65,6 +65,7 @@ import java.util.List;
 import java.util.StringTokenizer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
 
 /**
  * Triggers builds of other projects.
@@ -81,7 +82,7 @@ import java.util.logging.Logger;
  *
  * @author Kohsuke Kawaguchi
  */
-public class BuildTrigger extends Recorder implements DependecyDeclarer {
+public class BuildTrigger extends Recorder implements DependencyDeclarer {
 
     /**
      * Comma-separated list of other projects to be scheduled.
@@ -295,7 +296,7 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
         }
 
         @Override
-        public Publisher newInstance(StaplerRequest req, JSONObject formData) throws FormException {
+        public BuildTrigger newInstance(StaplerRequest req, JSONObject formData) throws FormException {
             String childProjectsString = formData.getString("childProjects").trim();
             if (childProjectsString.endsWith(",")) {
                 childProjectsString = childProjectsString.substring(0, childProjectsString.length() - 1).trim();
@@ -310,15 +311,15 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
             return true;
         }
 
-        public boolean showEvenIfUnstableOption(Class<? extends AbstractProject> jobType) {
+        public boolean showEvenIfUnstableOption(@CheckForNull Class<? extends AbstractProject<?,?>> jobType) {
             // UGLY: for promotion process, this option doesn't make sense.
-            return !jobType.getName().contains("PromotionProcess");
+            return jobType == null || !jobType.getName().contains("PromotionProcess");
         }
 
         /**
          * Form validation method.
          */
-        public FormValidation doCheck(@AncestorInPath Item project, @QueryParameter String value ) {
+        public FormValidation doCheck(@AncestorInPath Item project, @QueryParameter String value, @QueryParameter boolean upstream) {
             // Require CONFIGURE permission on this project
             if(!project.hasPermission(Item.CONFIGURE))      return FormValidation.ok();
 
@@ -333,6 +334,9 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
                                 AbstractProject.findNearest(projectName,project.getParent()).getRelativeNameFrom(project)));
                     if(!(item instanceof AbstractProject))
                         return FormValidation.error(Messages.BuildTrigger_NotBuildable(projectName));
+                    if (!upstream && !item.hasPermission(Item.BUILD)) {
+                        return FormValidation.error(Messages.BuildTrigger_you_have_no_permission_to_build_(projectName));
+                    }
                     hasProjects = true;
                 }
             }
@@ -343,17 +347,8 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
             return FormValidation.ok();
         }
 
-        public AutoCompletionCandidates doAutoCompleteChildProjects(@QueryParameter String value) {
-            AutoCompletionCandidates candidates = new AutoCompletionCandidates();
-            List<Job> jobs = Jenkins.getInstance().getItems(Job.class);
-            for (Job job: jobs) {
-                if (job.getFullName().startsWith(value)) {
-                    if (job.hasPermission(Item.READ)) {
-                        candidates.add(job.getFullName());
-                    }
-                }
-            }
-            return candidates;
+        public AutoCompletionCandidates doAutoCompleteChildProjects(@QueryParameter String value, @AncestorInPath Item self, @AncestorInPath ItemGroup container) {
+            return AutoCompletionCandidates.ofJobNames(Job.class,value,self,container);
         }
 
         @Extension
@@ -362,7 +357,7 @@ public class BuildTrigger extends Recorder implements DependecyDeclarer {
             public void onRenamed(Item item, String oldName, String newName) {
                 // update BuildTrigger of other projects that point to this object.
                 // can't we generalize this?
-                for( Project<?,?> p : Jenkins.getInstance().getProjects() ) {
+                for( Project<?,?> p : Jenkins.getInstance().getAllItems(Project.class) ) {
                     BuildTrigger t = p.getPublishersList().get(BuildTrigger.class);
                     if(t!=null) {
                         if(t.onJobRenamed(oldName,newName)) {

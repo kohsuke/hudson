@@ -28,12 +28,14 @@ import hudson.AbortException;
 import hudson.Functions;
 import hudson.Util;
 import hudson.console.ModelHyperlinkNote;
+import hudson.matrix.MatrixConfiguration.ParentBuildAction;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.BuildListener;
 import hudson.model.Executor;
 import hudson.model.Fingerprint;
 import hudson.model.Queue;
+import hudson.model.Queue.Item;
 import hudson.model.Result;
 import hudson.util.HttpResponses;
 import jenkins.model.Jenkins;
@@ -50,6 +52,7 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 import javax.servlet.ServletException;
 
@@ -65,7 +68,6 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
      * If non-null, the {@link MatrixBuild} originates from the given build number.
      */
     private Integer baseBuild;
-
 
     public MatrixBuild(MatrixProject job) throws IOException {
         super(job);
@@ -102,7 +104,7 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
             return;
         }
         
-        List<MatrixRun> runs = getRuns();
+        List<MatrixRun> runs = getExactRuns();
         for(MatrixRun run : runs){
         	why = run.getWhyKeepLog();
             if (why!=null) {
@@ -193,6 +195,16 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
         if(config==null)    return null;
         return getRunForConfiguration(config);
     }
+
+    /**
+     * Like {@link #getRun(Combination)}, but do not approximate the result by earlier execution
+     * of the given combination (which is done for partial rebuild of the matrix.)
+     */
+    public MatrixRun getExactRun(Combination c) {
+        MatrixConfiguration config = getParent().getItem(c);
+        if(config==null)    return null;
+        return config.getBuildByNumber(getNumber());
+    }
     
     /**
      * Returns all {@link MatrixRun}s for this {@link MatrixBuild}.
@@ -234,11 +246,26 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
     @Override
     public String getWhyKeepLog() {
         MatrixBuild b = getNextBuild();
-        if (b!=null && b.isPartial())
-            return b.getDisplayName()+" depends on this";
+        if (isLinkedBy(b))
+            return Messages.MatrixBuild_depends_on_this(b.getDisplayName());
         return super.getWhyKeepLog();
     }
 
+    /** 
+     * @return True if another {@link MatrixBuild} build (passed as a parameter) depends on this build.
+     * @since 1.481 
+     */
+    public boolean isLinkedBy(MatrixBuild b) {
+    	if(null == b)
+    		return false;
+    	for(MatrixConfiguration c : b.getParent().getActiveConfigurations()) {
+            MatrixRun r = c.getNearestOldBuild(b.getNumber());
+            if (r != null && r.getNumber()==getNumber())
+                return true;
+        }
+        return false;
+    }
+    
     /**
      * True if this build didn't do a full build and it is depending on the result of the previous build.
      */
@@ -274,7 +301,7 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
 
     @Override
     public void run() {
-        run(new RunnerImpl());
+        execute(new MatrixBuildExecution());
     }
 
     @Override
@@ -285,22 +312,47 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
         return rs;
     }
 
-    private class RunnerImpl extends AbstractRunner {
+    /**
+     * Object that lives from the start of {@link MatrixBuild} execution to its end.
+     *
+     * Used to keep track of things that are needed only during the build.
+     */
+    public class MatrixBuildExecution extends AbstractBuildExecution {
         private final List<MatrixAggregator> aggregators = new ArrayList<MatrixAggregator>();
+        private Set<MatrixConfiguration> activeConfigurations;
+
+        /**
+         * Snapshot of {@link MatrixProject#getActiveConfigurations()} to ensure
+         * that the build will use a consistent view of it.
+         */
+        public Set<MatrixConfiguration> getActiveConfigurations() {
+            return activeConfigurations;
+        }
+
+        /**
+         * Aggregators attached to this build execution, that are notified
+         * of every start/end of {@link MatrixRun}.
+         */
+        public List<MatrixAggregator> getAggregators() {
+            return aggregators;
+        }
 
         protected Result doRun(BuildListener listener) throws Exception {
             MatrixProject p = getProject();
             PrintStream logger = listener.getLogger();
 
+            // give axes a chance to rebuild themselves
+            activeConfigurations = p.rebuildConfigurations(this);
+
             // list up aggregators
-            listUpAggregators(listener, p.getPublishers().values());
-            listUpAggregators(listener, p.getProperties().values());
-            listUpAggregators(listener, p.getBuildWrappers().values());
+            listUpAggregators(p.getPublishers().values());
+            listUpAggregators(p.getProperties().values());
+            listUpAggregators(p.getBuildWrappers().values());
 
             axes = p.getAxes();
 
             try {
-                return p.getExecutionStrategy().run(MatrixBuild.this, aggregators, listener);
+                return p.getExecutionStrategy().run(this);
             } catch( InterruptedException e ) {
                 logger.println("Aborted");
                 Executor x = Executor.currentExecutor();
@@ -314,9 +366,14 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
                 Queue q = Jenkins.getInstance().getQueue();
                 synchronized(q) {// avoid micro-locking in q.cancel.
                     final int n = getNumber();
-                    for (MatrixConfiguration c : p.getActiveConfigurations()) {
-                        if(q.cancel(c))
-                            logger.println(Messages.MatrixBuild_Cancelled(ModelHyperlinkNote.encodeTo(c)));
+                    for (MatrixConfiguration c : activeConfigurations) {
+                        for (Item i : q.getItems(c)) {
+                            ParentBuildAction a = i.getAction(ParentBuildAction.class);
+                            if (a!=null && a.parent==getBuild()) {
+                                q.cancel(i);
+                                logger.println(Messages.MatrixBuild_Cancelled(ModelHyperlinkNote.encodeTo(c)));
+                            }
+                        }
                         MatrixRun b = c.getBuildByNumber(n);
                         if(b!=null && b.isBuilding()) {// executor can spend some time in post production state, so only cancel in-progress builds.
                             Executor exe = b.getExecutor();
@@ -330,7 +387,7 @@ public class MatrixBuild extends AbstractBuild<MatrixProject,MatrixBuild> {
             }
         }
 
-        private void listUpAggregators(BuildListener listener, Collection<?> values) {
+        private void listUpAggregators(Collection<?> values) {
             for (Object v : values) {
                 if (v instanceof MatrixAggregatable) {
                     MatrixAggregatable ma = (MatrixAggregatable) v;

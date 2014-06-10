@@ -30,6 +30,7 @@ package hudson.model;
 import hudson.security.AccessControlled;
 import hudson.slaves.ComputerListener;
 import hudson.slaves.RetentionStrategy;
+import jenkins.model.Jenkins;
 import org.kohsuke.stapler.StaplerFallback;
 import org.kohsuke.stapler.StaplerProxy;
 
@@ -37,6 +38,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
 
 import jenkins.model.Configuration;
 
@@ -77,7 +79,7 @@ public abstract class AbstractCIBase extends Node implements ItemGroup<TopLevelI
         v.owner = this;
     }
     protected void interruptReloadThread() {
-        ExternalJob.reloadThread.interrupt();
+        ViewJob.reloadThread.interrupt();
     }
 
     protected void killComputer(Computer c) {
@@ -115,7 +117,8 @@ public abstract class AbstractCIBase extends Node implements ItemGroup<TopLevelI
         if (c!=null) {
             c.setNode(n); // reuse
         } else {
-            if(n.getNumExecutors()>0) {
+            // we always need Computer for the master as a fallback in case there's no other Computer.
+            if(n.getNumExecutors()>0 || n==Jenkins.getInstance()) {
                 computers.put(n, c = n.createComputer());
                 if (!n.isHoldOffLaunchUntilSave() && automaticSlaveLaunch) {
                     RetentionStrategy retentionStrategy = c.getRetentionStrategy();
@@ -137,13 +140,14 @@ public abstract class AbstractCIBase extends Node implements ItemGroup<TopLevelI
         for (Map.Entry<Node, Computer> e : computers.entrySet()) {
             if (e.getValue() == computer) {
                 computers.remove(e.getKey());
+                computer.onRemoved();
                 return;
             }
         }
         throw new IllegalStateException("Trying to remove unknown computer");
     }
 
-    /*package*/ Computer getComputer(Node n) {
+    /*package*/ @CheckForNull Computer getComputer(Node n) {
         Map<Node,Computer> computers = getComputerMap();
         return computers.get(n);
     }

@@ -27,9 +27,6 @@ import com.thoughtworks.xstream.converters.reflection.PureJavaReflectionProvider
 import com.thoughtworks.xstream.core.JVM;
 import hudson.model.Hudson;
 import jenkins.model.Jenkins;
-import hudson.model.User;
-import hudson.triggers.SafeTimerTask;
-import hudson.triggers.Trigger;
 import hudson.util.HudsonIsLoading;
 import hudson.util.IncompatibleServletVersionDetected;
 import hudson.util.IncompatibleVMDetected;
@@ -62,6 +59,7 @@ import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.security.Security;
+import java.util.logging.LogRecord;
 
 /**
  * Entry point when Hudson is used as a webapp.
@@ -69,7 +67,13 @@ import java.security.Security;
  * @author Kohsuke Kawaguchi
  */
 public final class WebAppMain implements ServletContextListener {
-    private final RingBufferLogHandler handler = new RingBufferLogHandler();
+    private final RingBufferLogHandler handler = new RingBufferLogHandler() {
+        @Override public synchronized void publish(LogRecord record) {
+            if (record.getLevel().intValue() >= Level.INFO.intValue()) {
+                super.publish(record);
+            }
+        }
+    };
     private static final String APP = "app";
     private boolean terminated;
     private Thread initThread;
@@ -209,7 +213,7 @@ public final class WebAppMain implements ServletContextListener {
 
             context.setAttribute(APP,new HudsonIsLoading());
 
-            initThread = new Thread("hudson initialization thread") {
+            initThread = new Thread("Jenkins initialization thread") {
                 @Override
                 public void run() {
                     boolean success = false;
@@ -254,8 +258,7 @@ public final class WebAppMain implements ServletContextListener {
     @edu.umd.cs.findbugs.annotations.SuppressWarnings("LG_LOST_LOGGER_DUE_TO_WEAK_REFERENCE")
     private void installLogger() {
         Jenkins.logRecords = handler.getView();
-        Logger.getLogger("hudson").addHandler(handler);
-        Logger.getLogger("jenkins").addHandler(handler);
+        Logger.getLogger("").addHandler(handler);
     }
 
     /** Add some metadata to a File, allowing to trace setup issues */
@@ -345,8 +348,7 @@ public final class WebAppMain implements ServletContextListener {
 
         // Logger is in the system classloader, so if we don't do this
         // the whole web app will never be undepoyed.
-        Logger.getLogger("hudson").removeHandler(handler);
-        Logger.getLogger("jenkins").removeHandler(handler);
+        Logger.getLogger("").removeHandler(handler);
     }
 
     private static final Logger LOGGER = Logger.getLogger(WebAppMain.class.getName());

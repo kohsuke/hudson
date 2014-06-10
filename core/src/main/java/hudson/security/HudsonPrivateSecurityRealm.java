@@ -36,7 +36,6 @@ import hudson.model.UserProperty;
 import hudson.model.UserPropertyDescriptor;
 import hudson.security.FederatedLoginService.FederatedIdentity;
 import hudson.security.captcha.CaptchaSupport;
-import hudson.tasks.Mailer;
 import hudson.util.PluginServletFilter;
 import hudson.util.Protector;
 import hudson.util.Scrambler;
@@ -52,6 +51,7 @@ import org.acegisecurity.providers.encoding.PasswordEncoder;
 import org.acegisecurity.providers.encoding.ShaPasswordEncoder;
 import org.acegisecurity.userdetails.UserDetails;
 import org.acegisecurity.userdetails.UsernameNotFoundException;
+import org.apache.tools.ant.taskdefs.email.Mailer;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.ForwardToView;
 import org.kohsuke.stapler.HttpResponse;
@@ -59,6 +59,7 @@ import org.kohsuke.stapler.HttpResponses;
 import org.kohsuke.stapler.Stapler;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
+import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.dao.DataAccessException;
 
 import javax.servlet.Filter;
@@ -71,10 +72,16 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.MissingResourceException;
+import java.util.ResourceBundle;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * {@link SecurityRealm} that performs authentication by looking up {@link User}.
@@ -168,8 +175,15 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
     @Override
     protected Details authenticate(String username, String password) throws AuthenticationException {
         Details u = loadUserByUsername(username);
-        if (!PASSWORD_ENCODER.isPasswordValid(u.getPassword(),password,null))
-            throw new BadCredentialsException("Failed to login as "+username);
+        if (!u.isPasswordCorrect(password)) {
+            String message;
+            try {
+                message = ResourceBundle.getBundle("org.acegisecurity.messages").getString("AbstractUserDetailsAuthenticationProvider.badCredentials");
+            } catch (MissingResourceException x) {
+                message = "Bad credentials";
+            }
+            throw new BadCredentialsException(message);
+        }
         return u;
     }
 
@@ -193,7 +207,7 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
 
     /**
      * Creates an account and associates that with the given identity. Used in conjunction
-     * with {@link #commenceSignup(FederatedIdentity)}.
+     * with {@link #commenceSignup}.
      */
     public User doCreateAccountWithFederatedIdentity(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
         User u = _doCreateAccount(req,rsp,"signupWithFederatedIdentity.jelly");
@@ -228,6 +242,7 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
     /**
      * Lets the current user silently login as the given user and report back accordingly.
      */
+    @SuppressWarnings("ACL.impersonate")
     private void loginAndTakeBack(StaplerRequest req, StaplerResponse rsp, User u) throws ServletException, IOException {
         // ... and let him login
         Authentication a = new UsernamePasswordAuthenticationToken(u.getId(),req.getParameter("password1"));
@@ -291,27 +306,29 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
         SignupInfo si = new SignupInfo(req);
 
         if(selfRegistration && !validateCaptcha(si.captcha))
-            si.errorMessage = "Text didn't match the word shown in the image";
+            si.errorMessage = Messages.HudsonPrivateSecurityRealm_CreateAccount_TextNotMatchWordInImage();
 
         if(si.password1 != null && !si.password1.equals(si.password2))
-            si.errorMessage = "Password didn't match";
+            si.errorMessage = Messages.HudsonPrivateSecurityRealm_CreateAccount_PasswordNotMatch();
 
         if(!(si.password1 != null && si.password1.length() != 0))
-            si.errorMessage = "Password is required";
+            si.errorMessage = Messages.HudsonPrivateSecurityRealm_CreateAccount_PasswordRequired();
 
         if(si.username==null || si.username.length()==0)
-            si.errorMessage = "User name is required";
+            si.errorMessage = Messages.HudsonPrivateSecurityRealm_CreateAccount_UserNameRequired();
         else {
             User user = User.get(si.username, false);
             if (null != user)
-                si.errorMessage = "User name is already taken";
+                // Allow sign up. SCM people has no such property.
+                if (user.getProperty(Details.class) != null)
+                    si.errorMessage = Messages.HudsonPrivateSecurityRealm_CreateAccount_UserNameAlreadyTaken();
         }
 
         if(si.fullname==null || si.fullname.length()==0)
             si.fullname = si.username;
 
         if(si.email==null || !si.email.contains("@"))
-            si.errorMessage = "Invalid e-mail address";
+            si.errorMessage = Messages.HudsonPrivateSecurityRealm_CreateAccount_InvalidEmailAddress();
 
         if(si.errorMessage!=null) {
             // failed. ask the user to try again.
@@ -322,8 +339,17 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
 
         // register the user
         User user = createAccount(si.username,si.password1);
-        user.addProperty(new Mailer.UserProperty(si.email));
         user.setFullName(si.fullname);
+        try {
+            // legacy hack. mail support has moved out to a separate plugin
+            Class<?> up = Jenkins.getInstance().pluginManager.uberClassLoader.loadClass("hudson.tasks.Mailer$UserProperty");
+            Constructor<?> c = up.getDeclaredConstructor(String.class);
+            user.addProperty((UserProperty)c.newInstance(si.email));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to set the e-mail address",e);
+        }
         user.save();
         return user;
     }
@@ -449,6 +475,10 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
             return passwordHash;
         }
 
+        public boolean isPasswordCorrect(String candidate) {
+            return PASSWORD_ENCODER.isPasswordValid(getPassword(),candidate,null);
+        }
+
         public String getProtectedPassword() {
             // put session Id in it to prevent a replay attack.
             return Protector.protect(Stapler.getCurrentRequest().getSession().getId()+':'+getPassword());
@@ -569,7 +599,7 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
      * This abbreviates the need to store the salt separately, which in turn allows us to hide the salt handling
      * in this little class. The rest of the Acegi thinks that we are not using salt.
      */
-    public static final PasswordEncoder PASSWORD_ENCODER = new PasswordEncoder() {
+    /*package*/ static final PasswordEncoder CLASSIC = new PasswordEncoder() {
         private final PasswordEncoder passwordEncoder = new ShaPasswordEncoder(256);
 
         public String encodePassword(String rawPass, Object _) throws DataAccessException {
@@ -606,6 +636,44 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
             }
             return buf.toString();
         }
+    };
+
+    /**
+     * {@link PasswordEncoder} that uses jBCrypt.
+     */
+    private static final PasswordEncoder JBCRYPT_ENCODER = new PasswordEncoder() {
+        public String encodePassword(String rawPass, Object _) throws DataAccessException {
+            return BCrypt.hashpw(rawPass,BCrypt.gensalt());
+        }
+
+        public boolean isPasswordValid(String encPass, String rawPass, Object _) throws DataAccessException {
+            return BCrypt.checkpw(rawPass,encPass);
+        }
+    };
+
+    /**
+     * Combines {@link #JBCRYPT_ENCODER} and {@link #CLASSIC} into one so that we can continue
+     * to accept {@link #CLASSIC} format but new encoding will always done via {@link #JBCRYPT_ENCODER}.
+     */
+    public static final PasswordEncoder PASSWORD_ENCODER = new PasswordEncoder() {
+        /*
+            CLASSIC encoder outputs "salt:hash" where salt is [a-z]+, so we use unique prefix '#jbcyrpt"
+            to designate JBCRYPT-format hash.
+
+            '#' is neither in base64 nor hex, which makes it a good choice.
+         */
+        public String encodePassword(String rawPass, Object salt) throws DataAccessException {
+            return JBCRYPT_HEADER+JBCRYPT_ENCODER.encodePassword(rawPass,salt);
+        }
+
+        public boolean isPasswordValid(String encPass, String rawPass, Object salt) throws DataAccessException {
+            if (encPass.startsWith(JBCRYPT_HEADER))
+                return JBCRYPT_ENCODER.isPasswordValid(encPass.substring(JBCRYPT_HEADER.length()),rawPass,salt);
+            else
+                return CLASSIC.isPasswordValid(encPass,rawPass,salt);
+        }
+
+        private static final String JBCRYPT_HEADER = "#jbcrypt:";
     };
 
     @Extension
@@ -646,4 +714,6 @@ public class HudsonPrivateSecurityRealm extends AbstractPasswordBasedSecurityRea
         public void destroy() {
         }
     };
+
+    private static final Logger LOGGER = Logger.getLogger(HudsonPrivateSecurityRealm.class.getName());
 }

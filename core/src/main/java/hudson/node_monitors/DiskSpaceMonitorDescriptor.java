@@ -45,8 +45,9 @@ import org.kohsuke.stapler.export.Exported;
  * {@link AbstractNodeMonitorDescriptor} for {@link NodeMonitor} that checks a free disk space of some directory.
  *
  * @author Kohsuke Kawaguchi
+ * @since 1.520
 */
-/*package*/ abstract class DiskSpaceMonitorDescriptor extends AbstractNodeMonitorDescriptor<DiskSpace> {
+public abstract class DiskSpaceMonitorDescriptor extends AbstractAsyncNodeMonitorDescriptor<DiskSpace> {
     /**
      * Value object that represents the disk space.
      */
@@ -57,13 +58,7 @@ import org.kohsuke.stapler.export.Exported;
         public final long size;
         
         private boolean triggered;
-
-        /**
-         * @deprecated as of 1.467
-         */
-        public DiskSpace(long size) {
-            this(".",size);
-        }
+        private Class<? extends AbstractDiskSpaceMonitor> trigger;
 
         /**
          * @param path
@@ -121,6 +116,18 @@ import org.kohsuke.stapler.export.Exported;
         	this.triggered = triggered;
         }
 
+        /** 
+         * Same as {@link DiskSpace#setTriggered(boolean)}, also sets the trigger class which made the decision
+         */
+        protected void setTriggered(Class<? extends AbstractDiskSpaceMonitor> trigger, boolean triggered) {
+            this.trigger = trigger;
+            this.triggered = triggered;
+        }
+        
+        public Class<? extends AbstractDiskSpaceMonitor> getTrigger() {
+            return trigger;
+        }
+        
         /**
          * Parses a human readable size description like "1GB", "0.5m", etc. into {@link DiskSpace}
          *
@@ -152,16 +159,8 @@ import org.kohsuke.stapler.export.Exported;
         private static final long serialVersionUID = 2L;
     }
 
-    protected DiskSpace monitor(Computer c) throws IOException, InterruptedException {
-        return getFreeSpace(c);
-    }
-
-    /**
-     * Computes the free size.
-     */
-    protected abstract DiskSpace getFreeSpace(Computer c) throws IOException, InterruptedException;
-
     protected static final class GetUsableSpace implements FileCallable<DiskSpace> {
+        public GetUsableSpace() {}
         @IgnoreJRERequirement
         public DiskSpace invoke(File f, VirtualChannel channel) throws IOException {
             try {

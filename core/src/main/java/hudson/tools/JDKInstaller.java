@@ -224,16 +224,33 @@ public class JDKInstaller extends ToolInstaller {
              */
             String logFile = jdkBundle+".install.log";
 
-            ArgumentListBuilder args = new ArgumentListBuilder();
-            args.add(jdkBundle);
-            if (isJava15() || isJava14()) {
-                args.add("/s","/v/qn REBOOT=ReallySuppress INSTALLDIR=\\\""+ expectedLocation +"\\\" /L \\\""+logFile+"\\\"");
-            } else {
-                // modern version supports arguments in more sane format.
-                args.add("/s","/v","/qn","/L","\\\""+logFile+"\\\"","REBOOT=ReallySuppress","INSTALLDIR=\\\""+ expectedLocation+"\\\"");
+            expectedLocation = expectedLocation.trim();
+            if (expectedLocation.endsWith("\\")) {
+                // Prevent a trailing slash from escaping quotes
+                expectedLocation = expectedLocation.substring(0, expectedLocation.length() - 1);
             }
-            // according to http://community.acresso.com/showthread.php?t=83301, \" is the trick to quote values with whitespaces.
-            // Oh Windows, oh windows, why do you have to be so difficult?
+            ArgumentListBuilder args = new ArgumentListBuilder();
+            assert (new File(expectedLocation).exists()) : expectedLocation
+                    + " must exist, otherwise /L will cause the installer to fail with error 1622";
+            if (isJava15() || isJava14()) {
+                // Installer uses InstallShield.
+                args.add("CMD.EXE", "/C");
+
+                // CMD.EXE /C must be followed by a single parameter (do not split it!)
+                args.add(jdkBundle + " /s /v\"/qn REBOOT=ReallySuppress INSTALLDIR=\\\""
+                        + expectedLocation + "\\\" /L \\\"" + expectedLocation
+                        + "\\jdk.exe.install.log\\\"\"");
+            } else {
+                // Installed uses Windows Installer (MSI)
+                args.add(jdkBundle, "/s");
+
+                // Create a private JRE by omitting "PublicjreFeature"
+                // @see http://docs.oracle.com/javase/7/docs/webnotes/install/windows/jdk-installation-windows.html#jdk-silent-installation
+                args.add("ADDLOCAL=\"ToolsFeature\"");
+
+                args.add("REBOOT=ReallySuppress", "INSTALLDIR=" + expectedLocation,
+                        "/L \\\"" + expectedLocation + "\\jdk.exe.install.log\\\"");
+            }
             int r = launcher.launch().cmds(args).stdout(out)
                     .pwd(new FilePath(launcher.getChannel(), expectedLocation)).join();
             if (r != 0) {
@@ -264,7 +281,7 @@ public class JDKInstaller extends ToolInstaller {
 
     /**
      * Abstraction of the file system to perform JDK installation.
-     * Consider {@link FilePathFileSystem} as the canonical documentation of the contract.
+     * Consider {@link JDKInstaller.FilePathFileSystem} as the canonical documentation of the contract.
      */
     public interface FileSystem {
         void delete(String file) throws IOException, InterruptedException;
@@ -372,6 +389,7 @@ public class JDKInstaller extends ToolInstaller {
 
         HttpMethodBase m = new GetMethod(primary.filepath);
         hc.getState().addCookie(new Cookie(".oracle.com","gpw_e24",".", "/", -1, false));
+        hc.getState().addCookie(new Cookie(".oracle.com","oraclelicense","accept-securebackup-cookie", "/", -1, false));
         try {
             while (true) {
                 if (totalPageCount++>16) // looping too much
@@ -490,11 +508,7 @@ public class JDKInstaller extends ToolInstaller {
          * Determines the platform of the given node.
          */
         public static Platform of(Node n) throws IOException,InterruptedException,DetectionFailedException {
-            return n.getChannel().call(new Callable<Platform,DetectionFailedException>() {
-                public Platform call() throws DetectionFailedException {
-                    return current();
-                }
-            });
+            return n.getChannel().call(new GetCurrentPlatform());
         }
 
         public static Platform current() throws DetectionFailedException {
@@ -504,6 +518,14 @@ public class JDKInstaller extends ToolInstaller {
             if(arch.contains("sun") || arch.contains("solaris"))    return SOLARIS;
             throw new DetectionFailedException("Unknown CPU name: "+arch);
         }
+
+        static class GetCurrentPlatform implements Callable<Platform,DetectionFailedException> {
+            private static final long serialVersionUID = 1L;
+            public Platform call() throws DetectionFailedException {
+                return current();
+            }
+        }
+
     }
 
     /**
@@ -542,11 +564,7 @@ public class JDKInstaller extends ToolInstaller {
          * Determines the CPU of the given node.
          */
         public static CPU of(Node n) throws IOException,InterruptedException, DetectionFailedException {
-            return n.getChannel().call(new Callable<CPU,DetectionFailedException>() {
-                public CPU call() throws DetectionFailedException {
-                    return current();
-                }
-            });
+            return n.getChannel().call(new GetCurrentCPU());
         }
 
         /**
@@ -562,6 +580,14 @@ public class JDKInstaller extends ToolInstaller {
             if(arch.contains("86"))    return i386;
             throw new DetectionFailedException("Unknown CPU architecture: "+arch);
         }
+
+        static class GetCurrentCPU implements Callable<CPU,DetectionFailedException> {
+            private static final long serialVersionUID = 1L;
+            public CPU call() throws DetectionFailedException {
+                return current();
+            }
+        }
+
     }
 
     /**

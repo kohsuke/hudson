@@ -34,7 +34,7 @@ THE SOFTWARE.
       </h1>
       <p>
         <span style="font-weight:bold">
-          <st:out value="${it.fullName}"/>
+          <st:out value="${it.fullDisplayName}"/>
         </span>
         <j:if test="${it.suiteResult != null &amp;&amp; it.className != it.suiteResult.name}">
           (from <st:out value="${it.suiteResult.name}"/>)
@@ -67,6 +67,11 @@ THE SOFTWARE.
           <st:include page="summary.jelly" from="${action}" optional="true" it="${action}" />
 		    </j:forEach>
       </table>
+
+      <j:if test="${!empty(it.skippedMessage)}">
+        <h3>${%Skip Message}</h3>
+        <pre><j:out value="${it.annotate(it.skippedMessage)}"/></pre>
+      </j:if>
 
       <j:if test="${!empty(it.errorDetails)}">
         <h3>${%Error Message}</h3>

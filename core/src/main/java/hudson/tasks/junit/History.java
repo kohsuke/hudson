@@ -228,8 +228,8 @@ public class History {
                 }
             };
             plot.setRenderer(ar);
-            ar.setSeriesPaint(0,ColorPalette.RED); // Failures.
-            ar.setSeriesPaint(1,ColorPalette.YELLOW); // Skips.
+            ar.setSeriesPaint(0,ColorPalette.YELLOW); // Skips.
+            ar.setSeriesPaint(1,ColorPalette.RED); // Failures.
             ar.setSeriesPaint(2,ColorPalette.BLUE); // Total.
 
             // crop extra space around the graph
@@ -293,4 +293,12 @@ public class History {
 
     }
 
+    public static int asInt(String s, int defalutValue) {
+        if (s==null)    return defalutValue;
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return defalutValue;
+        }
+    }
 }

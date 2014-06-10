@@ -24,6 +24,9 @@
 package hudson.tasks.test;
 
 import hudson.model.AbstractBuild;
+
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.StaplerProxy;
 
 /**
@@ -32,10 +35,17 @@ import org.kohsuke.stapler.StaplerProxy;
 public class TrivialTestResultAction extends AbstractTestResultAction<TrivialTestResultAction> implements StaplerProxy {
 
     protected TrivialTestResult result;
+
+    @Deprecated
     protected TrivialTestResultAction(AbstractBuild owner, TrivialTestResult result) {
         super(owner);
         this.result = result;
         this.result.setParentAction(this);
+    }
+
+    @Restricted(NoExternalUse.class)
+    protected TrivialTestResultAction(TrivialTestResult result) {
+        this(null, result);
     }
 
     /**

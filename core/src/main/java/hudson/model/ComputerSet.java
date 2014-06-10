@@ -28,13 +28,20 @@ import hudson.DescriptorExtensionList;
 import hudson.Extension;
 import hudson.Util;
 import hudson.XmlFile;
+import hudson.init.Initializer;
 import hudson.model.Descriptor.FormException;
 import hudson.model.listeners.SaveableListener;
 import hudson.node_monitors.NodeMonitor;
 import hudson.slaves.NodeDescriptor;
+import hudson.triggers.SafeTimerTask;
 import hudson.util.DescribableList;
+import hudson.util.FormApply;
 import hudson.util.FormValidation;
 import jenkins.model.Jenkins;
+import jenkins.model.ModelObjectWithChildren;
+import jenkins.model.ModelObjectWithContextMenu.ContextMenu;
+import jenkins.util.Timer;
+import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -47,11 +54,16 @@ import static javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST;
 import java.io.File;
 import java.io.IOException;
 import java.util.AbstractList;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import net.sf.json.JSONObject;
+
+import static hudson.init.InitMilestone.JOB_LOADED;
 
 /**
  * Serves as the top of {@link Computer}s in the URL hierarchy.
@@ -61,7 +73,7 @@ import java.util.logging.Logger;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public final class ComputerSet extends AbstractModelObject implements Describable<ComputerSet> {
+public final class ComputerSet extends AbstractModelObject implements Describable<ComputerSet>, ModelObjectWithChildren {
     /**
      * This is the owner that persists {@link #monitors}.
      */
@@ -91,6 +103,14 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
     @Exported(name="computer",inline=true)
     public Computer[] get_all() {
         return Jenkins.getInstance().getComputers();
+    }
+
+    public ContextMenu doChildrenContextMenu(StaplerRequest request, StaplerResponse response) throws Exception {
+        ContextMenu m = new ContextMenu();
+        for (Computer c : get_all()) {
+            m.add(c);
+        }
+        return m;
     }
 
     /**
@@ -167,7 +187,7 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
     public int getIdleExecutors() {
         int r=0;
         for (Computer c : get_all())
-            if(c.isOnline() || c.isConnecting())
+            if((c.isOnline() || c.isConnecting()) && c.isAcceptingTasks())
                 r += c.countIdle();
         return r;
     }
@@ -200,7 +220,10 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
         
         for (NodeMonitor nodeMonitor : NodeMonitor.getAll()) {
             Thread t = nodeMonitor.triggerUpdate();
-            t.setName(nodeMonitor.getColumnCaption());
+            String columnCaption = nodeMonitor.getColumnCaption();
+            if (columnCaption != null) {
+                t.setName(columnCaption);
+            }
         }
         rsp.forwardToPreviousPage(req);
     }
@@ -231,6 +254,10 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
             String xml = Jenkins.XSTREAM.toXML(src);
             Node result = (Node) Jenkins.XSTREAM.fromXML(xml);
             result.setNodeName(name);
+            if(result instanceof Slave){ //change userId too
+                User user = User.current();
+                ((Slave)result).setUserId(user==null ? "anonymous" : user.getId());
+             }
             result.holdOffLaunchUntilSave = true;
 
             app.addNode(result);
@@ -257,9 +284,13 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
                                            @QueryParameter String type ) throws IOException, ServletException, FormException {
         final Jenkins app = Jenkins.getInstance();
         app.checkPermission(Computer.CREATE);
-        checkName(name);
+        String fixedName = Util.fixEmptyAndTrim(name);
+        checkName(fixedName);
 
-        Node result = NodeDescriptor.all().find(type).newInstance(req, req.getSubmittedForm());
+        JSONObject formData = req.getSubmittedForm();
+        formData.put("name", fixedName);
+        
+        Node result = NodeDescriptor.all().find(type).newInstance(req, formData);
         app.addNode(result);
 
         // take the user back to the slave list top page
@@ -305,7 +336,7 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
      * Accepts submission from the configuration page.
      */
     @RequirePOST
-    public synchronized void doConfigSubmit( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException, FormException {
+    public synchronized HttpResponse doConfigSubmit( StaplerRequest req) throws IOException, ServletException, FormException {
         BulkChange bc = new BulkChange(MONITORS_OWNER);
         try {
             Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
@@ -318,7 +349,13 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
                     if(i!=null)
                         monitors.add(i);
                 }
-            rsp.sendRedirect2(".");
+
+            // recompute the data
+            for (NodeMonitor nm : monitors) {
+                nm.triggerUpdate();
+            }
+
+            return FormApply.success(".");
         } finally {
             bc.commit();
         }
@@ -366,6 +403,16 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
      */
     public static void initialize() {}
 
+    @Initializer(after= JOB_LOADED)
+    public static void init() {
+        // start monitoring nodes, although there's no hurry.
+        Timer.get().schedule(new SafeTimerTask() {
+            public void doRun() {
+                ComputerSet.initialize();
+            }
+        }, 10, TimeUnit.SECONDS);
+    }
+
     private static final Logger LOGGER = Logger.getLogger(ComputerSet.class.getName());
 
     static {
@@ -378,7 +425,16 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
             if(xf.exists()) {
                 DescribableList<NodeMonitor,Descriptor<NodeMonitor>> persisted =
                         (DescribableList<NodeMonitor,Descriptor<NodeMonitor>>) xf.read();
-                r.replaceBy(persisted.toList());
+                List<NodeMonitor> sanitized = new ArrayList<NodeMonitor>();
+                for (NodeMonitor nm : persisted) {
+                    try {
+                        nm.getDescriptor();
+                        sanitized.add(nm);
+                    } catch (Throwable e) {
+                        // the descriptor didn't load? see JENKINS-15869
+                    }
+                }
+                r.replaceBy(sanitized);
             }
 
             // if we have any new monitors, let's add them
@@ -389,8 +445,8 @@ public final class ComputerSet extends AbstractModelObject implements Describabl
                         r.add(i);
                 }
             monitors.replaceBy(r.toList());
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to instanciate NodeMonitors",e);
+        } catch (Throwable x) {
+            LOGGER.log(Level.WARNING, "Failed to instantiate NodeMonitors", x);
         }
     }
 

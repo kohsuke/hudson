@@ -67,6 +67,7 @@ import java.util.logging.Logger;
 
 import static com.sun.jna.Pointer.NULL;
 import static hudson.util.jna.GNUCLibrary.LIBC;
+import static java.util.logging.Level.FINE;
 import static java.util.logging.Level.FINER;
 import static java.util.logging.Level.FINEST;
 
@@ -305,7 +306,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
      * Code that gets executed on the machine where the {@link OSProcess} is local.
      * Used to act on {@link OSProcess}.
      *
-     * @see OSProcess#act(ProcessCallable)
+     * @see ProcessTree.OSProcess#act(ProcessTree.ProcessCallable)
      */
     public interface ProcessCallable<T> extends Serializable {
         /**
@@ -395,6 +396,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
         Windows() {
             for (final WinProcess p : WinProcess.all()) {
                 int pid = p.getPid();
+                if(pid == 0 || pid == 4) continue; // skip the System Idle and System processes
                 super.processes.put(pid,new OSProcess(pid) {
                     private EnvVars env;
                     private List<String> args;
@@ -404,9 +406,10 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                         return null;
                     }
 
-                    public void killRecursively() {
+                    public void killRecursively() throws InterruptedException {
                         LOGGER.finer("Killing recursively "+getPid());
                         p.killRecursively();
+                        killByKiller();
                     }
 
                     public void kill() throws InterruptedException {
@@ -423,7 +426,17 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
 
                     @Override
                     public synchronized EnvVars getEnvironmentVariables() {
-                        if(env==null)   env = new EnvVars(p.getEnvironmentVariables());
+                        if(env !=null)
+                          return env;
+                        env = new EnvVars();   
+                        
+                        try 
+                        {
+                           env.putAll(p.getEnvironmentVariables());
+                        } catch (WinpException e)
+                        {
+                           LOGGER.log(FINE, "Failed to get environment variable ", e);
+                        }                          
                         return env;
                     }
                 });

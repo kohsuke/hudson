@@ -23,18 +23,14 @@
  */
 package hudson.triggers;
 
-import static hudson.init.InitMilestone.JOB_LOADED;
 import hudson.DependencyRunner;
 import hudson.DependencyRunner.ProjectRunnable;
 import hudson.DescriptorExtensionList;
 import hudson.Extension;
 import hudson.ExtensionPoint;
-import hudson.init.Initializer;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
-import hudson.model.AperiodicWork;
 import hudson.model.Build;
-import hudson.model.ComputerSet;
 import hudson.model.Describable;
 import hudson.scheduler.Hash;
 import jenkins.model.Jenkins;
@@ -45,7 +41,6 @@ import hudson.model.TopLevelItem;
 import hudson.model.TopLevelItemDescriptor;
 import hudson.scheduler.CronTab;
 import hudson.scheduler.CronTabList;
-import hudson.util.DoubleLaunchChecker;
 
 import java.io.InvalidObjectException;
 import java.io.ObjectStreamException;
@@ -56,12 +51,13 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.List;
-import java.util.Timer;
 import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import antlr.ANTLRException;
+import javax.annotation.CheckForNull;
+import edu.umd.cs.findbugs.annotations.SuppressWarnings;
 
 /**
  * Triggers a {@link Build}.
@@ -80,7 +76,7 @@ public abstract class Trigger<J extends Item> implements Describable<Trigger<?>>
      * @param project
      *      given so that the persisted form of this object won't have to have a back pointer.
      * @param newInstance
-     *      True if this is a newly created trigger first attached to the {@link Project}.
+     *      True if this may be a newly created trigger first attached to the {@link Project} (generally if the project is being created or configured).
      *      False if this is invoked for a {@link Project} loaded from disk.
      */
     public void start(J project, boolean newInstance) {
@@ -277,28 +273,12 @@ public abstract class Trigger<J extends Item> implements Describable<Trigger<?>>
      * Initialized and cleaned up by {@link jenkins.model.Jenkins}, but value kept here for compatibility.
      *
      * If plugins want to run periodic jobs, they should implement {@link PeriodicWork}.
+     *
+     * @deprecated Use {@link jenkins.util.Timer#get()} instead.
      */
-    public static Timer timer;
-
-    @Initializer(after=JOB_LOADED)
-    public static void init() {
-        new DoubleLaunchChecker().schedule();
-
-        // start all PeridocWorks
-        for(PeriodicWork p : PeriodicWork.all())
-            timer.scheduleAtFixedRate(p,p.getInitialDelay(),p.getRecurrencePeriod());
-        
-        // start all AperidocWorks
-        for(AperiodicWork p : AperiodicWork.all())
-            timer.schedule(p,p.getInitialDelay());
-
-        // start monitoring nodes, although there's no hurry.
-        timer.schedule(new SafeTimerTask() {
-            public void doRun() {
-                ComputerSet.initialize();
-            }
-        }, 1000*10);
-    }
+    @SuppressWarnings("MS_SHOULD_BE_FINAL")
+    @Deprecated
+    public static @CheckForNull java.util.Timer timer;
 
     /**
      * Returns all the registered {@link Trigger} descriptors.

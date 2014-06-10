@@ -26,6 +26,9 @@ package hudson.tasks.test;
 import hudson.model.AbstractBuild;
 import hudson.tasks.junit.CaseResult;
 import hudson.tasks.junit.TestResult;
+
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.export.ExportedBean;
 
@@ -67,9 +70,13 @@ public abstract class AggregatedTestResultAction extends AbstractTestResultActio
      */
     public final List<Child> children = new ArrayList<Child>();
 
+    @Deprecated
     public AggregatedTestResultAction(AbstractBuild owner) {
         super(owner);
     }
+
+    @Restricted(NoExternalUse.class)
+    public AggregatedTestResultAction() {}
 
     protected void update(List<? extends AbstractTestResultAction> children) {
         failCount = skipCount = totalCount = 0;
@@ -126,7 +133,7 @@ public abstract class AggregatedTestResultAction extends AbstractTestResultActio
 
         public ChildReport(AbstractBuild<?, ?> child, AbstractTestResultAction result) {
             this.child = child;
-            this.result = result.getResult();
+            this.result = result!=null ? result.getResult() : null;
         }
     }
 

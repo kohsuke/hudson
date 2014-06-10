@@ -40,6 +40,8 @@ import java.io.FileFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Defines a bunch of static methods to be used as a "mix-in" for {@link ItemGroup}
@@ -99,7 +101,7 @@ public abstract class ItemGroupMixIn {
                 V item = (V) Items.load(parent,subdir);
                 configurations.put(key.call(item), item);
             } catch (IOException e) {
-                e.printStackTrace(); // TODO: logging
+                Logger.getLogger(ItemGroupMixIn.class.getName()).log(Level.WARNING, "could not load " + subdir, e);
             }
         }
 
@@ -189,9 +191,6 @@ public abstract class ItemGroupMixIn {
 
     /**
      * Copies an existing {@link TopLevelItem} to a new name.
-     *
-     * The caller is responsible for calling {@link ItemListener#fireOnCopied(Item, Item)}. This method
-     * cannot do that because it doesn't know how to make the newly added item reachable from the parent.
      */
     @SuppressWarnings({"unchecked"})
     public synchronized <T extends TopLevelItem> T copy(T src, String name) throws IOException {
@@ -203,12 +202,17 @@ public abstract class ItemGroupMixIn {
         Util.copyFile(Items.getConfigFile(src).getFile(),Items.getConfigFile(result).getFile());
 
         // reload from the new config
-        result = (T)Items.load(parent,result.getRootDir());
+        Items.updatingByXml.set(true);
+        try {
+            result = (T)Items.load(parent,result.getRootDir());
+        } finally {
+            Items.updatingByXml.set(false);
+        }
         result.onCopiedFrom(src);
 
         add(result);
         ItemListener.fireOnCopied(src,result);
-        Hudson.getInstance().rebuildDependencyGraph();
+        Jenkins.getInstance().rebuildDependencyGraphAsync();
 
         return result;
     }
@@ -224,11 +228,17 @@ public abstract class ItemGroupMixIn {
             IOUtils.copy(xml,configXml);
 
             // load it
-            TopLevelItem result = (TopLevelItem)Items.load(parent,configXml.getParentFile());
+            TopLevelItem result;
+            Items.updatingByXml.set(true);
+            try {
+                result = (TopLevelItem)Items.load(parent,configXml.getParentFile());
+            } finally {
+                Items.updatingByXml.set(false);
+            }
             add(result);
 
             ItemListener.fireOnCreated(result);
-            Jenkins.getInstance().rebuildDependencyGraph();
+            Jenkins.getInstance().rebuildDependencyGraphAsync();
 
             return result;
         } catch (IOException e) {
@@ -259,6 +269,7 @@ public abstract class ItemGroupMixIn {
         }
         item.save();
         add(item);
+        Jenkins.getInstance().rebuildDependencyGraphAsync();
 
         if (notify)
             ItemListener.fireOnCreated(item);

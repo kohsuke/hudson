@@ -24,6 +24,7 @@
 package jenkins;
 
 import hudson.Plugin;
+import org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement;
 import org.kohsuke.MetaInfServices;
 
 import javax.annotation.processing.AbstractProcessor;
@@ -33,6 +34,7 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
@@ -56,6 +58,7 @@ import java.util.Set;
 @SupportedSourceVersion(SourceVersion.RELEASE_6)
 @SupportedAnnotationTypes("*")
 @MetaInfServices(Processor.class)
+@IgnoreJRERequirement
 @SuppressWarnings({"Since15"})
 public class PluginSubtypeMarker extends AbstractProcessor {
     @Override
@@ -81,8 +84,12 @@ public class PluginSubtypeMarker extends AbstractProcessor {
                 }
             };
 
-            for( Element e : roundEnv.getRootElements() )
-                scanner.scan(e,null);
+            for (Element e : roundEnv.getRootElements()) {
+                if (e.getKind() == ElementKind.PACKAGE) { // JENKINS-11739
+                    continue;
+                }
+                scanner.scan(e, null);
+            }
 
             return false;
         } catch (RuntimeException e) {

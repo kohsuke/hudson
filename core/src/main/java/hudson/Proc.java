@@ -399,7 +399,7 @@ public abstract class Proc {
                     try {
                         byte[] buf = new byte[8192];
                         int len;
-                        while ((len = in.read(buf)) > 0) {
+                        while ((len = in.read(buf)) >= 0) {
                             out.write(buf, 0, len);
                             out.flush();
                         }
@@ -429,7 +429,7 @@ public abstract class Proc {
     /**
      * Remotely launched process via {@link Channel}.
      *
-     * @deprecated as of 1.399
+     * @deprecated as of 1.399. Replaced by {@link Launcher.RemoteLauncher.ProcImpl}
      */
     public static final class RemoteProc extends Proc {
         private final Future<Integer> process;

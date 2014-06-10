@@ -1,4 +1,4 @@
-<?xml version="1.0"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!--
 The MIT License
 
@@ -29,7 +29,7 @@ THE SOFTWARE.
   <parent>
     <artifactId>pom</artifactId>
     <groupId>org.jenkins-ci.main</groupId>
-    <version>1.467-SNAPSHOT</version>
+    <version>1.532.4-SNAPSHOT</version>
   </parent>
   <groupId>org.jenkins-ci.main</groupId>
   <artifactId>jenkins-test-harness</artifactId>
@@ -40,7 +40,7 @@ THE SOFTWARE.
   </description>
 
   <properties>
-    <concurrency>2</concurrency> <!-- -1 means # of processors in the system -->
+    <concurrency>2</concurrency> <!-- may use e.g. 2C for 2 × (number of cores) -->
     <mavenDebug>false</mavenDebug>
   </properties>
 
@@ -64,17 +64,22 @@ THE SOFTWARE.
     <dependency>
       <groupId>${project.groupId}</groupId>
       <artifactId>maven-plugin</artifactId>
-      <version>${project.version}</version>
+      <version>${maven-plugin.version}</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>ant</artifactId>
-      <version>1.1</version>
+      <version>1.2</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>subversion</artifactId>
-      <version>1.26</version>
+      <version>1.45</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jenkins-ci.plugins</groupId>
+      <artifactId>mailer</artifactId>
+      <version>1.5</version>
     </dependency>
     <dependency>
       <groupId>org.mortbay.jetty</groupId>
@@ -95,11 +100,12 @@ THE SOFTWARE.
     </dependency>
     <dependency>
       <groupId>junit</groupId>
-      <artifactId>junit-dep</artifactId>
+      <artifactId>junit</artifactId>
     </dependency>
     <dependency>
       <groupId>org.hamcrest</groupId>
       <artifactId>hamcrest-library</artifactId>
+      <version>1.3</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci</groupId>
@@ -140,27 +146,25 @@ THE SOFTWARE.
       <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.netbeans.modules</groupId>
+      <artifactId>org-netbeans-insane</artifactId>
+      <version>RELEASE72</version>
+    </dependency>
+    <dependency>
+      <groupId>com.github.stephenc.findbugs</groupId>
+      <artifactId>findbugs-annotations</artifactId>
+      <version>1.3.9-1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.geb</groupId>
+      <artifactId>geb-implicit-assertions</artifactId>
+      <version>0.7.2</version>
+    </dependency>
   </dependencies>
 
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>build-helper-maven-plugin</artifactId>
-        <executions>
-          <execution>
-            <phase>generate-sources</phase>
-            <goals>
-              <goal>add-test-source</goal>
-            </goals>
-            <configuration>
-              <sources>
-                <source>${project.basedir}/src/test/junit4</source>
-              </sources>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>org.kohsuke.stapler</groupId>
         <artifactId>maven-stapler-plugin</artifactId>
@@ -168,18 +172,35 @@ THE SOFTWARE.
         <extensions>true</extensions>
       </plugin>
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <!-- version specified in grandparent pom -->
         <configuration>
-          <skip>true</skip>
-          <!-- tests now run by maven-junit-plugin -->
+          <argLine>-Dfile.encoding=UTF-8 -XX:MaxPermSize=128m</argLine>
+          <systemPropertyVariables>
+              <!-- use AntClassLoader that supports predictable file handle release -->
+              <hudson.ClassicPluginStrategy.useAntClassLoader>true</hudson.ClassicPluginStrategy.useAntClassLoader>
+              <hudson.maven.debug>${mavenDebug}</hudson.maven.debug>
+              <buildDirectory>${project.build.directory}</buildDirectory>
+          </systemPropertyVariables>
+          <reuseForks>true</reuseForks>
+          <forkCount>${concurrency}</forkCount>
+          <redirectTestOutputToFile>true</redirectTestOutputToFile>
         </configuration>
       </plugin>
       <plugin>
-        <groupId>org.kohsuke.gmaven</groupId>
+        <groupId>org.codehaus.gmaven</groupId>
         <artifactId>gmaven-plugin</artifactId>
         <!-- version specified in grandparent pom -->
         <executions>
+          <execution>
+            <id>default</id>
+            <!-- compile and process annotations in Groovy test code -->
+            <goals>
+              <goal>generateTestStubs</goal>
+              <goal>testCompile</goal>
+            </goals>
+          </execution>
           <execution>
             <id>preset-packager</id>
             <phase>process-resources</phase>
@@ -189,13 +210,6 @@ THE SOFTWARE.
             <configuration>
               <source>${pom.basedir}/src/main/preset-data/package.groovy</source>
             </configuration>
-          </execution>
-          <execution>
-            <id>test-in-groovy</id>
-            <!-- allow tests written in Groovy -->
-            <goals>
-              <goal>testCompile</goal>
-            </goals>
           </execution>
         </executions>
         <dependencies>
@@ -210,83 +224,21 @@ THE SOFTWARE.
             <artifactId>ant-launcher</artifactId>
             <version>1.8.0</version>
           </dependency>
+
+          <dependency>
+            <groupId>org.codehaus.gmaven.runtime</groupId>
+            <artifactId>gmaven-runtime-2.0</artifactId>
+            <version>1.5-jenkins-1</version>
+          </dependency>
         </dependencies>
+        <configuration>
+          <providerSelection>2.0</providerSelection>
+        </configuration>
       </plugin>
     </plugins>
   </build>
 
   <profiles>
-
-    <profile>
-      <id>run-test-harness</id>
-      <activation>
-        <property>
-          <name>!skip-test-harness</name>
-        </property>
-      </activation>
-      <build>
-        <plugins>
-          <plugin>
-            <!-- JUnit4 test is failed with maven-junit-plugin-->
-            <artifactId>maven-surefire-plugin</artifactId>
-            <!-- version specified in grandparent pom -->
-            <configuration>
-              <skip>false</skip>
-              <includes>
-                <include>**/UseRecipesWithJenkinsRuleTest.java</include>
-              </includes>
-            </configuration>
-          </plugin>
-          <plugin>
-            <!-- see http://maven-junit-plugin.kenai.com/ for more info -->
-            <groupId>org.kohsuke</groupId>
-            <artifactId>maven-junit-plugin</artifactId>
-            <!-- version specified in grandparent pom -->
-            <executions>
-              <execution>
-                <goals>
-                  <goal>test</goal>
-                </goals>
-                <configuration>
-                  <fork>true</fork>
-                  <concurrency>${concurrency}</concurrency>
-                  <argLine>-Dfile.encoding=UTF-8 -XX:MaxPermSize=128m</argLine>
-                  <timeout>300</timeout>
-                  <systemProperties>
-                    <property>
-                      <!-- use AntClassLoader that supports predictable file handle release -->
-                      <name>hudson.ClassicPluginStrategy.useAntClassLoader</name>
-                      <value>true</value>
-                    </property>
-                    <property>
-                      <name>hudson.maven.debug</name>
-                      <value>${mavenDebug}</value>
-                    </property>
-                    <property>
-                      <name>java.io.tmpdir</name>
-                      <value>${project.build.directory}</value>
-                    </property>
-                    <property>
-                      <name>buildDirectory</name>
-                      <value>${project.build.directory}</value>
-                    </property>
-                    <property>
-                      <name>java.awt.headless</name>
-                      <value>true</value>
-                    </property>
-                  </systemProperties>
-                  <excludes>
-                    <exclude>org/jvnet/hudson/main/UseRecipesWithJenkinsRuleTest.class</exclude>
-                  </excludes>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-
-    </profile>
-
     <profile>
       <id>light-test</id>
       <properties>
@@ -301,7 +253,7 @@ THE SOFTWARE.
       <build>
         <plugins>
           <plugin>
-            <groupId>org.kohsuke.gmaven</groupId>
+            <groupId>org.codehaus.gmaven</groupId>
             <artifactId>gmaven-plugin</artifactId>
             <!-- version specified in grandparent pom -->
             <executions>
