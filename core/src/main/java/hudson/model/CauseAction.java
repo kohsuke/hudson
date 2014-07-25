@@ -32,12 +32,15 @@ import org.kohsuke.stapler.export.ExportedBean;
 import com.thoughtworks.xstream.converters.UnmarshallingContext;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import jenkins.model.RunAction2;
 
 @ExportedBean
-public class CauseAction implements FoldableAction, RunAction {
+public class CauseAction implements FoldableAction, RunAction2 {
     /**
      * @deprecated since 2009-02-28
      */
@@ -50,7 +53,15 @@ public class CauseAction implements FoldableAction, RunAction {
     public CauseAction(Cause c) {
    		this.causes.add(c);
    	}
-   	
+
+    public CauseAction(Cause... c) {
+   		this(Arrays.asList(c));
+   	}
+
+    public CauseAction(Collection<? extends Cause> causes) {
+   		this.causes.addAll(causes);
+   	}
+
    	public CauseAction(CauseAction ca) {
    		this.causes.addAll(ca.causes);
    	}
@@ -90,8 +101,10 @@ public class CauseAction implements FoldableAction, RunAction {
     public Map<Cause,Integer> getCauseCounts() {
         Map<Cause,Integer> result = new LinkedHashMap<Cause,Integer>();
         for (Cause c : causes) {
-            Integer i = result.get(c);
-            result.put(c, i == null ? 1 : i.intValue() + 1);
+            if (c != null) {
+                Integer i = result.get(c);
+                result.put(c, i == null ? 1 : i.intValue() + 1);
+            }
         }
         return result;
     }
@@ -105,22 +118,21 @@ public class CauseAction implements FoldableAction, RunAction {
         return causes.get(0).getShortDescription();
     }
 
-    public void onLoad() {
-        // noop
-    }
-
-    public void onBuildComplete() {
-        // noop
+    @Override public void onLoad(Run<?,?> owner) {
+        for (Cause c : causes) {
+            if (c != null) {
+                c.onLoad(owner);
+            }
+        }
     }
 
     /**
      * When hooked up to build, notify {@link Cause}s.
      */
-    public void onAttached(Run owner) {
-        if (owner instanceof AbstractBuild) {// this should be always true but being defensive here
-            AbstractBuild b = (AbstractBuild) owner;
-            for (Cause c : causes) {
-                c.onAddedTo(b);
+    @Override public void onAttached(Run<?,?> owner) {
+        for (Cause c : causes) {
+            if (c != null) {
+                c.onAddedTo(owner);
             }
         }
     }
@@ -132,7 +144,7 @@ public class CauseAction implements FoldableAction, RunAction {
             return;
         }
         // no CauseAction found, so add a copy of this one
-        item.getActions().add(new CauseAction(this));
+        item.addAction(new CauseAction(this));
     }
 
     public static class ConverterImpl extends XStream2.PassthruConverter<CauseAction> {

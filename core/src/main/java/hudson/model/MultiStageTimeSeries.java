@@ -27,6 +27,7 @@ import hudson.util.TimeUnit2;
 import hudson.util.NoOverlapCategoryAxis;
 import hudson.util.ChartUtil;
 
+import java.io.Serializable;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -65,7 +66,7 @@ import javax.servlet.ServletException;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public class MultiStageTimeSeries {
+public class MultiStageTimeSeries implements Serializable {
     /**
      * Name of this data series.
      */
@@ -93,6 +94,9 @@ public class MultiStageTimeSeries {
     public final TimeSeries hour;
 
     private int counter;
+
+    private static final Font CHART_FONT = Font.getFont(MultiStageTimeSeries.class.getName() + ".chartFont",
+            new Font(Font.SANS_SERIF, Font.PLAIN, 10));
 
     public MultiStageTimeSeries(Localizable title, Color color, float initialValue, float decay) {
         this.title = title;
@@ -189,7 +193,7 @@ public class MultiStageTimeSeries {
      * <p>
      * This object is renderable as HTTP response.
      */
-    public static final class TrendChart implements HttpResponse {
+    public static class TrendChart implements HttpResponse {
         public final TimeScale timeScale;
         public final List<MultiStageTimeSeries> series;
         public final DefaultCategoryDataset dataset;
@@ -203,7 +207,7 @@ public class MultiStageTimeSeries {
         /**
          * Creates a {@link DefaultCategoryDataset} for rendering a graph from a set of {@link MultiStageTimeSeries}.
          */
-        private DefaultCategoryDataset createDataset() {
+        protected DefaultCategoryDataset createDataset() {
             float[][] dataPoints = new float[series.size()][];
             for (int i = 0; i < series.size(); i++)
                 dataPoints[i] = series.get(i).pick(timeScale).getHistory();
@@ -241,33 +245,56 @@ public class MultiStageTimeSeries {
                     );
 
             chart.setBackgroundPaint(Color.white);
+            chart.getLegend().setItemFont(CHART_FONT);
 
             final CategoryPlot plot = chart.getCategoryPlot();
-            plot.setBackgroundPaint(Color.WHITE);
-            plot.setOutlinePaint(null);
-            plot.setRangeGridlinesVisible(true);
-            plot.setRangeGridlinePaint(Color.black);
+            configurePlot(plot);
 
-            final LineAndShapeRenderer renderer = (LineAndShapeRenderer) plot.getRenderer();
-            renderer.setBaseStroke(new BasicStroke(3));
+            configureRangeAxis((NumberAxis) plot.getRangeAxis());
 
-            for (int i = 0; i < series.size(); i++)
-                renderer.setSeriesPaint(i, series.get(i).color);
+            crop(plot);
 
+            return chart;
+        }
+
+        protected void configureRangeAxis(NumberAxis rangeAxis) {
+            rangeAxis.setStandardTickUnits(NumberAxis.createIntegerTickUnits());
+            rangeAxis.setTickLabelFont(CHART_FONT);
+            rangeAxis.setLabelFont(CHART_FONT);
+        }
+
+        protected void crop(CategoryPlot plot) {
+            // crop extra space around the graph
+            plot.setInsets(new RectangleInsets(0, 0, 0, 5.0));
+        }
+
+        protected CategoryAxis configureDomainAxis(CategoryPlot plot) {
             final CategoryAxis domainAxis = new NoOverlapCategoryAxis(null);
             plot.setDomainAxis(domainAxis);
             domainAxis.setCategoryLabelPositions(CategoryLabelPositions.UP_90);
             domainAxis.setLowerMargin(0.0);
             domainAxis.setUpperMargin(0.0);
             domainAxis.setCategoryMargin(0.0);
+            domainAxis.setLabelFont(CHART_FONT);
+            domainAxis.setTickLabelFont(CHART_FONT);
+            return domainAxis;
+        }
 
-            final NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
-            rangeAxis.setStandardTickUnits(NumberAxis.createIntegerTickUnits());
+        protected void configureRenderer(LineAndShapeRenderer renderer) {
+            renderer.setBaseStroke(new BasicStroke(3));
 
-            // crop extra space around the graph
-            plot.setInsets(new RectangleInsets(0, 0, 0, 5.0));
+            for (int i = 0; i < series.size(); i++)
+                renderer.setSeriesPaint(i, series.get(i).color);
+        }
 
-            return chart;
+        protected void configurePlot(CategoryPlot plot) {
+            plot.setBackgroundPaint(Color.WHITE);
+            plot.setOutlinePaint(null);
+            plot.setRangeGridlinesVisible(true);
+            plot.setRangeGridlinePaint(Color.black);
+
+            configureRenderer((LineAndShapeRenderer) plot.getRenderer());
+            configureDomainAxis(plot);
         }
 
         /**
@@ -281,4 +308,6 @@ public class MultiStageTimeSeries {
     public static TrendChart createTrendChart(TimeScale scale, MultiStageTimeSeries... data) {
         return new TrendChart(scale,data);
     }
+
+    private static final long serialVersionUID = 1L;
 }

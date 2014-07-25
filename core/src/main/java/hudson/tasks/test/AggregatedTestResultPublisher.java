@@ -30,8 +30,11 @@ import hudson.Extension;
 import hudson.Launcher;
 import hudson.Util;
 import static hudson.Util.fixNull;
+import hudson.model.Action;
 import hudson.model.BuildListener;
 import hudson.model.Fingerprint.RangeSet;
+import hudson.model.InvisibleAction;
+import hudson.model.ItemGroup;
 import jenkins.model.Jenkins;
 import hudson.model.Item;
 import hudson.model.Job;
@@ -55,6 +58,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import javax.annotation.CheckForNull;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 /**
  * Aggregates downstream test reports into a single consolidated report,
@@ -86,12 +92,16 @@ public class AggregatedTestResultPublisher extends Recorder {
 
     public boolean perform(AbstractBuild<?,?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
         // add a TestResult just so that it can show up later.
-        build.addAction(new TestResultAction(jobs,includeFailedBuilds,build));
+        build.addAction(new TestResultAction(jobs, includeFailedBuilds, build));
         return true;
     }
 
     public BuildStepMonitor getRequiredMonitorService() {
         return BuildStepMonitor.NONE;
+    }
+
+    @Override public Collection<? extends Action> getProjectActions(AbstractProject<?, ?> project) {
+        return Collections.singleton(new TestResultProjectAction(project));
     }
 
     /**
@@ -103,9 +113,9 @@ public class AggregatedTestResultPublisher extends Recorder {
     public static final class TestResultAction extends AbstractTestResultAction {
         /**
          * Jobs to aggregate. Comma separated.
-         * Never null.
+         * Null if doing downstream projects.
          */
-        private final String jobs;
+        private final @CheckForNull String jobs;
 
         /**
          * Should failed builds be included?
@@ -130,6 +140,7 @@ public class AggregatedTestResultPublisher extends Recorder {
         private transient List<AbstractProject> didntRun;
         private transient List<AbstractProject> noFingerprints;
 
+        @SuppressWarnings("deprecation") // calls getProject in constructor, so needs owner immediately
         public TestResultAction(String jobs, boolean includeFailedBuilds, AbstractBuild<?,?> owner) {
             super(owner);
             this.includeFailedBuilds = includeFailedBuilds;
@@ -351,19 +362,17 @@ public class AggregatedTestResultPublisher extends Recorder {
                 return new AggregatedTestResultPublisher(s.getString("jobs"), req.getParameter("includeFailedBuilds") != null);
         }
 
-        public AutoCompletionCandidates doAutoCompleteJobs(@QueryParameter String value) {
-            AutoCompletionCandidates candidates = new AutoCompletionCandidates();
-            List<Job> jobs = Jenkins.getInstance().getItems(Job.class);
-            for (Job job: jobs) {
-                if (job.getFullName().startsWith(value)) {
-                    if (job.hasPermission(Item.READ)) {
-                        candidates.add(job.getFullName());
-                    }
-                }
-            }
-            return candidates;
+        public AutoCompletionCandidates doAutoCompleteJobs(@QueryParameter String value, @AncestorInPath Item self, @AncestorInPath ItemGroup container) {
+            return AutoCompletionCandidates.ofJobNames(Job.class,value,self,container);
         }
+    }
 
+    @Restricted(NoExternalUse.class)
+    public static final class TestResultProjectAction extends InvisibleAction {
+        public final AbstractProject<?, ?> project;
+        private TestResultProjectAction(AbstractProject<?,?> project) {
+            this.project = project;
+        }
     }
 
 }

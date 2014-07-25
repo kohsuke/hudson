@@ -23,10 +23,21 @@
  */
 package hudson.security;
 
+import hudson.Functions;
+import jenkins.model.Jenkins;
+import jenkins.security.HMACConfidentialKey;
+import jenkins.security.ImpersonatingUserDetailsService;
+import jenkins.security.LastGrantedAuthoritiesProperty;
+import org.acegisecurity.Authentication;
 import org.acegisecurity.ui.rememberme.TokenBasedRememberMeServices;
 import org.acegisecurity.userdetails.UserDetails;
-import org.acegisecurity.Authentication;
-import org.apache.commons.codec.digest.DigestUtils;
+import org.acegisecurity.userdetails.UserDetailsService;
+import org.apache.commons.codec.binary.Base64;
+import org.springframework.util.Assert;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.util.Date;
 
 /**
  * {@link TokenBasedRememberMeServices} with modification so as not to rely
@@ -39,9 +50,24 @@ import org.apache.commons.codec.digest.DigestUtils;
  * @author Kohsuke Kawaguchi
  */
 public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices {
+    /**
+     * Decorate {@link UserDetailsService} so that we can use information stored in
+     * {@link LastGrantedAuthoritiesProperty}.
+     *
+     * We wrap by {@link ImpersonatingUserDetailsService} in other places too,
+     * so this is possibly redundant, but there are many {@link AbstractPasswordBasedSecurityRealm#loadUserByUsername(String)}
+     * implementations that do not do it, so doing it helps retrofit old plugins to benefit from
+     * the user impersonation improvements. Plus multiple {@link ImpersonatingUserDetailsService}
+     * do not incur any real performance penalty.
+     */
+    @Override
+    public void setUserDetailsService(UserDetailsService userDetailsService) {
+        super.setUserDetailsService(new ImpersonatingUserDetailsService(userDetailsService));
+    }
+
     @Override
     protected String makeTokenSignature(long tokenExpiryTime, UserDetails userDetails) {
-        String expectedTokenSignature = DigestUtils.md5Hex(userDetails.getUsername() + ":" + tokenExpiryTime + ":"
+        String expectedTokenSignature = MAC.mac(userDetails.getUsername() + ":" + tokenExpiryTime + ":"
                 + "N/A" + ":" + getKey());
         return expectedTokenSignature;
     }
@@ -50,4 +76,60 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
     protected String retrievePassword(Authentication successfulAuthentication) {
         return "N/A";
     }
+
+    @Override
+	public void loginSuccess(HttpServletRequest request, HttpServletResponse response,
+			Authentication successfulAuthentication) {
+		// Exit if the principal hasn't asked to be remembered
+		if (!rememberMeRequested(request, getParameter())) {
+			if (logger.isDebugEnabled()) {
+				logger.debug("Did not send remember-me cookie (principal did not set parameter '" +
+						getParameter() + "')");
+			}
+
+			return;
+		}
+
+		Jenkins j = Jenkins.getInstance();
+		if (j != null && j.isDisableRememberMe()) {
+			if (logger.isDebugEnabled()) {
+				logger.debug("Did not send remember-me cookie because 'Remember Me' is disabled in " +
+						"security configuration (principal did set parameter '" + getParameter() + "')");
+			}
+			// XXX log warning when receiving remember-me request despite the feature being disabled?
+			return;
+		}
+
+		Assert.notNull(successfulAuthentication.getPrincipal());
+		Assert.notNull(successfulAuthentication.getCredentials());
+		Assert.isInstanceOf(UserDetails.class, successfulAuthentication.getPrincipal());
+
+		long expiryTime = System.currentTimeMillis() + (tokenValiditySeconds * 1000);
+		String username = ((UserDetails) successfulAuthentication.getPrincipal()).getUsername();
+
+		String signatureValue = makeTokenSignature(expiryTime, (UserDetails)successfulAuthentication.getPrincipal());
+		String tokenValue = username + ":" + expiryTime + ":" + signatureValue;
+		String tokenValueBase64 = new String(Base64.encodeBase64(tokenValue.getBytes()));
+		response.addCookie(makeValidCookie(tokenValueBase64, request, tokenValiditySeconds));
+
+		if (logger.isDebugEnabled()) {
+			logger.debug("Added remember-me cookie for user '" + username + "', expiry: '" + new Date(expiryTime)
+							+ "'");
+		}
+	}
+
+    @Override
+    public Authentication autoLogin(HttpServletRequest request, HttpServletResponse response) {
+        try {
+            return super.autoLogin(request, response);
+        } catch (Exception e) {
+            cancelCookie(request, response, "Failed to handle remember-me cookie: "+Functions.printThrowable(e));
+            return null;
+        }
+    }
+
+    /**
+     * Used to compute the token signature securely.
+     */
+    private static final HMACConfidentialKey MAC = new HMACConfidentialKey(TokenBasedRememberMeServices.class,"mac");
 }

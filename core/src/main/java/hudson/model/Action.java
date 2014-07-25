@@ -46,7 +46,7 @@ import hudson.tasks.test.TestResultProjectAction;
  * it will be displayed as a floating box on the top page of
  * the target {@link ModelObject}. (For example, this is how
  * the JUnit test result trend shows up in the project top page.
- * See {@link TestResultProjectAction}.
+ * See {@link TestResultProjectAction}.)
  *
  * <p>
  * On the target {@link ModelObject} page, actions are rendered as an item in the side panel
@@ -104,7 +104,7 @@ public interface Action extends ModelObject {
     /**
      * Gets the URL path name.
      *
-     * <p>tions
+     * <p>
      * For example, if this method returns "xyz", and if the parent object
      * (that this action is associated with) is bound to /foo/bar/zot,
      * then this action object will be exposed to /foo/bar/zot/xyz.

@@ -57,6 +57,8 @@ import java.util.Set;
 import java.util.Vector;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nullable;
 
 /**
  * Atomic single token label, like "foo" or "bar".
@@ -91,8 +93,9 @@ public class LabelAtom extends Label implements Saveable {
      * {@link LabelAtomProperty}s who want to add a project action
      * should do so by implementing {@link LabelAtomProperty#getActions(LabelAtom)}.
      */
+    @SuppressWarnings("deprecation")
     @Override
-    public synchronized List<Action> getActions() {
+    public List<Action> getActions() {
         // add all the transient actions, too
         List<Action> actions = new Vector<Action>(super.getActions());
         actions.addAll(transientActions);
@@ -216,8 +219,9 @@ public class LabelAtom extends Label implements Saveable {
 
     /**
      * Obtains an atom by its {@linkplain #getName() name}.
+     * @see Jenkins#getLabelAtom
      */
-    public static LabelAtom get(String l) {
+    public static @Nullable LabelAtom get(@CheckForNull String l) {
         return Jenkins.getInstance().getLabelAtom(l);
     }
 

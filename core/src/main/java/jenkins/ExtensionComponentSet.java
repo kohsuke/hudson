@@ -29,7 +29,6 @@ import hudson.ExtensionFinder;
 import hudson.ExtensionPoint;
 import hudson.model.Descriptor;
 import hudson.model.Hudson;
-import jenkins.model.Jenkins;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -58,6 +57,24 @@ public abstract class ExtensionComponentSet {
      *      Can be empty but never null.
      */
     public abstract <T> Collection<ExtensionComponent<T>> find(Class<T> type);
+
+    /**
+     * Apply {@link ExtensionFilter}s and returns a filtered set.
+     */
+    public final ExtensionComponentSet filtered() {
+        final ExtensionComponentSet base = this;
+        return new ExtensionComponentSet() {
+            @Override
+            public <T> Collection<ExtensionComponent<T>> find(Class<T> type) {
+                List<ExtensionComponent<T>> a = Lists.newArrayList();
+                for (ExtensionComponent<T> c : base.find(type)) {
+                    if (ExtensionFilter.isAllowed(type,c))
+                        a.add(c);
+                }
+                return a;
+            }
+        };
+    }
 
     /**
      * Constant that has zero component in it.
@@ -95,7 +112,7 @@ public abstract class ExtensionComponentSet {
         return new ExtensionComponentSet() {
             @Override
             public <T> Collection<ExtensionComponent<T>> find(Class<T> type) {
-                return f.find(type,Hudson.getInstance());
+                return f.find(type, Hudson.getInstance());
             }
         };
     }

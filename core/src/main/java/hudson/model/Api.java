@@ -23,7 +23,9 @@
  */
 package hudson.model;
 
-import hudson.util.IOException2;
+import jenkins.model.Jenkins;
+import jenkins.security.SecureRequester;
+
 import org.dom4j.CharacterData;
 import org.dom4j.Document;
 import org.dom4j.DocumentException;
@@ -35,6 +37,7 @@ import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.export.*;
+import org.kohsuke.stapler.export.TreePruner.ByDepth;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletResponse;
@@ -43,7 +46,10 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.net.HttpURLConnection;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Used to expose remote access API for ".../api/"
@@ -54,6 +60,7 @@ import java.util.List;
  *
  * @author Kohsuke Kawaguchi
  * @see Exported
+ * @see SecureRequester
  */
 public class Api extends AbstractModelObject {
     /**
@@ -79,7 +86,10 @@ public class Api extends AbstractModelObject {
     public void doXml(StaplerRequest req, StaplerResponse rsp,
                       @QueryParameter String xpath,
                       @QueryParameter String wrapper,
+                      @QueryParameter String tree,
                       @QueryParameter int depth) throws IOException, ServletException {
+        setHeaders(rsp);
+
         String[] excludes = req.getParameterValues("exclude");
 
         if(xpath==null && excludes==null) {
@@ -92,7 +102,8 @@ public class Api extends AbstractModelObject {
 
         // first write to String
         Model p = MODEL_BUILDER.get(bean.getClass());
-        p.writeTo(bean,depth,Flavor.XML.createDataWriter(bean,sw));
+        TreePruner pruner = (tree!=null) ? new NamedPathPruner(tree) : new ByDepth(1 - depth);
+        p.writeTo(bean,pruner,Flavor.XML.createDataWriter(bean,sw));
 
         // apply XPath
         Object result;
@@ -139,20 +150,25 @@ public class Api extends AbstractModelObject {
             }
 
         } catch (DocumentException e) {
-            throw new IOException2("Failed to do XPath/wrapper handling. XML is as follows:"+sw,e);
+            LOGGER.log(Level.FINER, "Failed to do XPath/wrapper handling. XML is as follows:"+sw, e);
+            throw new IOException("Failed to do XPath/wrapper handling. Turn on FINER logging to view XML.",e);
         }
 
+
+        if (isSimpleOutput(result) && !permit(req)) {
+            // simple output prohibited
+            rsp.sendError(HttpURLConnection.HTTP_FORBIDDEN, "primitive XPath result sets forbidden; implement jenkins.security.SecureRequester");
+            return;
+        }
+
+        // switch to gzipped output
         OutputStream o = rsp.getCompressedOutputStream(req);
         try {
-            if(result instanceof CharacterData) {
+            if (isSimpleOutput(result)) {
+                // simple output allowed
                 rsp.setContentType("text/plain;charset=UTF-8");
-                o.write(((CharacterData)result).getText().getBytes("UTF-8"));
-                return;
-            }
-
-            if(result instanceof String || result instanceof Number || result instanceof Boolean) {
-                rsp.setContentType("text/plain;charset=UTF-8");
-                o.write(result.toString().getBytes("UTF-8"));
+                String text = result instanceof CharacterData ? ((CharacterData) result).getText() : result.toString();
+                o.write(text.getBytes("UTF-8"));
                 return;
             }
 
@@ -164,10 +180,15 @@ public class Api extends AbstractModelObject {
         }
     }
 
+    private boolean isSimpleOutput(Object result) {
+        return result instanceof CharacterData || result instanceof String || result instanceof Number || result instanceof Boolean;
+    }
+
     /**
      * Generate schema.
      */
     public void doSchema(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        setHeaders(rsp);
         rsp.setContentType("application/xml");
         StreamResult r = new StreamResult(rsp.getOutputStream());
         new SchemaGenerator(new ModelBuilder().get(bean.getClass())).generateSchema(r);
@@ -178,15 +199,37 @@ public class Api extends AbstractModelObject {
      * Exposes the bean as JSON.
      */
     public void doJson(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        rsp.serveExposedBean(req,bean, Flavor.JSON);
+        if (req.getParameter("jsonp") == null || permit(req)) {
+            setHeaders(rsp);
+            rsp.serveExposedBean(req,bean, Flavor.JSON);
+        } else {
+            rsp.sendError(HttpURLConnection.HTTP_FORBIDDEN, "jsonp forbidden; implement jenkins.security.SecureRequester");
+        }
     }
 
     /**
      * Exposes the bean as Python literal.
      */
     public void doPython(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        setHeaders(rsp);
         rsp.serveExposedBean(req,bean, Flavor.PYTHON);
     }
 
+    private boolean permit(StaplerRequest req) {
+        for (SecureRequester r : Jenkins.getInstance().getExtensionList(SecureRequester.class)) {
+            if (r.permit(req, bean)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void setHeaders(StaplerResponse rsp) {
+        rsp.setHeader("X-Jenkins", Jenkins.VERSION);
+        rsp.setHeader("X-Jenkins-Session", Jenkins.SESSION_HASH);
+    }
+
+    private static final Logger LOGGER = Logger.getLogger(Api.class.getName());
     private static final ModelBuilder MODEL_BUILDER = new ModelBuilder();
+
 }

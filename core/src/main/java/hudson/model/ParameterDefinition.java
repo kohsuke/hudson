@@ -32,6 +32,8 @@ import hudson.util.DescriptorList;
 
 import java.io.Serializable;
 import java.io.IOException;
+import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
 
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
@@ -44,7 +46,7 @@ import org.kohsuke.stapler.export.ExportedBean;
  * Defines a parameter for a build.
  *
  * <p>
- * In Hudson, a user can configure a job to require parameters for a build.
+ * In Jenkins, a user can configure a job to require parameters for a build.
  * For example, imagine a test job that takes the bits to be tested as a parameter.
  *
  * <p>
@@ -138,6 +140,19 @@ public abstract class ParameterDefinition implements
     }
 
     /**
+     * return parameter description, applying the configured MarkupFormatter for jenkins instance.
+     * @since 1.521
+     */
+    public String getFormattedDescription() {
+        try {
+            return Jenkins.getInstance().getMarkupFormatter().translate(description);
+        } catch (IOException e) {
+            LOGGER.warning("failed to translate description using configured markup formatter");
+            return "";
+        }
+    }
+
+    /**
      * {@inheritDoc}
      */
     public ParameterDescriptor getDescriptor() {
@@ -151,6 +166,7 @@ public abstract class ParameterDefinition implements
      * This method is invoked when the user fills in the parameter values in the HTML form
      * and submits it to the server.
      */
+    @CheckForNull
     public abstract ParameterValue createValue(StaplerRequest req, JSONObject jo);
     
     /**
@@ -169,6 +185,7 @@ public abstract class ParameterDefinition implements
      * @throws IllegalStateException
      *      If the parameter is deemed required but was missing in the submission.
      */
+    @CheckForNull
     public abstract ParameterValue createValue(StaplerRequest req);
 
 
@@ -186,6 +203,7 @@ public abstract class ParameterDefinition implements
      *      the command exits with an error code.
      * @since 1.334
      */
+    @CheckForNull
     public ParameterValue createValue(CLICommand command, String value) throws IOException, InterruptedException {
         throw new AbortException("CLI parameter submission is not supported for the "+getClass()+" type. Please file a bug report for this");
     }
@@ -196,6 +214,7 @@ public abstract class ParameterDefinition implements
      * @return default parameter value or null if no defaults are available
      * @since 1.253
      */
+    @CheckForNull
     @Exported
     public ParameterValue getDefaultParameterValue() {
         return null;
@@ -241,4 +260,6 @@ public abstract class ParameterDefinition implements
             return "Parameter";
         }
     }
+
+    private static final Logger LOGGER = Logger.getLogger(ParameterDefinition.class.getName());
 }

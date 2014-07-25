@@ -36,6 +36,9 @@ import hudson.AbortException;
 
 import java.io.IOException;
 
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 /**
  * Receives notifications about status changes of {@link Computer}s.
  *
@@ -161,19 +164,31 @@ public abstract class ComputerListener implements ExtensionPoint {
 
     /**
      * Called right after a {@link Computer} went offline.
+     *
+     * @deprecated since 1.571. Use {@link #onOffline(Computer, OfflineCause)} instead.
      */
+    @Deprecated
     public void onOffline(Computer c) {}
 
     /**
+     * Called right after a {@link Computer} went offline.
+     *
+     * @since 1.571
+     */
+    public void onOffline(@Nonnull Computer c, @CheckForNull OfflineCause cause) {
+        onOffline(c);
+    }
+
+    /**
      * Indicates that the computer was marked as temporarily online by the administrator.
-     * This is the reverse operation of {@link #onTemporarilyOffline(Computer)}
+     * This is the reverse operation of {@link #onTemporarilyOffline(Computer, OfflineCause)}
      *
      * @since 1.452
      */
     public void onTemporarilyOnline(Computer c) {}
     /**
-     * Indicates that the computer was marked as temporarily online by the administrator.
-     * This is the reverse operation of {@link #onTemporarilyOffline(Computer)}
+     * Indicates that the computer was marked as temporarily offline by the administrator.
+     * This is the reverse operation of {@link #onTemporarilyOnline(Computer)}
      *
      * @since 1.452
      */

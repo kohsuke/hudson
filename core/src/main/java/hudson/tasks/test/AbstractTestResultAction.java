@@ -23,11 +23,19 @@
  */
 package hudson.tasks.test;
 
+import hudson.Extension;
 import hudson.Functions;
 import hudson.model.*;
-import hudson.tasks.junit.CaseResult;
 import hudson.util.*;
 import hudson.util.ChartUtil.NumberOnlyBuildLabel;
+
+import java.awt.*;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import jenkins.model.RunAction2;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.axis.CategoryAxis;
@@ -44,13 +52,6 @@ import org.kohsuke.stapler.StaplerResponse;
 import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.export.ExportedBean;
 
-import java.awt.*;
-import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * Common base class for recording test result.
  *
@@ -61,13 +62,26 @@ import java.util.concurrent.ConcurrentHashMap;
  * @author Kohsuke Kawaguchi
  */
 @ExportedBean
-public abstract class AbstractTestResultAction<T extends AbstractTestResultAction> implements HealthReportingAction {
-    public final AbstractBuild<?,?> owner;
+public abstract class AbstractTestResultAction<T extends AbstractTestResultAction> implements HealthReportingAction, RunAction2 {
+    public transient AbstractBuild<?,?> owner;
 
     private Map<String,String> descriptions = new ConcurrentHashMap<String, String>();
 
+    /** @since 1.545 */
+    protected AbstractTestResultAction() {}
+
+    /** @deprecated Use the default constructor and just call {@link Run#addAction} to associate the build with the action. */
+    @Deprecated
     protected AbstractTestResultAction(AbstractBuild owner) {
         this.owner = owner;
+    }
+
+    @Override public void onAttached(Run<?, ?> r) {
+        this.owner = (AbstractBuild<?,?>) r;
+    }
+
+    @Override public void onLoad(Run<?, ?> r) {
+        this.owner = (AbstractBuild<?,?>) r;
     }
 
     /**
@@ -188,7 +202,7 @@ public abstract class AbstractTestResultAction<T extends AbstractTestResultActio
      * 
      * @return List of failed tests from associated test result.
      */
-    public List<CaseResult> getFailedTests() {
+    public List<? extends TestResult> getFailedTests() {
         return Collections.emptyList();
     }
 
@@ -361,4 +375,50 @@ public abstract class AbstractTestResultAction<T extends AbstractTestResultActio
     	
     	return this;
     }
+
+    @Extension public static final class Summarizer extends Run.StatusSummarizer {
+        @Override public Run.Summary summarize(Run<?,?> run, ResultTrend trend) {
+            AbstractTestResultAction<?> trN = run.getAction(AbstractTestResultAction.class);
+            if (trN == null) {
+                return null;
+            }
+            Boolean worseOverride;
+            switch (trend) {
+            case NOW_UNSTABLE:
+                worseOverride = false;
+                break;
+            case UNSTABLE:
+                worseOverride = true;
+                break;
+            case STILL_UNSTABLE:
+                worseOverride = null;
+                break;
+            default:
+                return null;
+            }
+            Run prev = run.getPreviousBuild();
+            AbstractTestResultAction<?> trP = prev == null ? null : prev.getAction(AbstractTestResultAction.class);
+            if (trP == null) {
+                if (trN.getFailCount() > 0) {
+                    return new Run.Summary(worseOverride != null ? worseOverride : true, Messages.Run_Summary_TestFailures(trN.getFailCount()));
+                }
+            } else {
+                if (trN.getFailCount() != 0) {
+                    if (trP.getFailCount() == 0) {
+                        return new Run.Summary(worseOverride != null ? worseOverride : true, Messages.Run_Summary_TestsStartedToFail(trN.getFailCount()));
+                    }
+                    if (trP.getFailCount() < trN.getFailCount()) {
+                        return new Run.Summary(worseOverride != null ? worseOverride : true, Messages.Run_Summary_MoreTestsFailing(trN.getFailCount() - trP.getFailCount(), trN.getFailCount()));
+                    }
+                    if (trP.getFailCount() > trN.getFailCount()) {
+                        return new Run.Summary(worseOverride != null ? worseOverride : false, Messages.Run_Summary_LessTestsFailing(trP.getFailCount() - trN.getFailCount(), trN.getFailCount()));
+                    }
+
+                    return new Run.Summary(worseOverride != null ? worseOverride : false, Messages.Run_Summary_TestsStillFailing(trN.getFailCount()));
+                }
+            }
+            return null;
+        }
+    }
+
 }

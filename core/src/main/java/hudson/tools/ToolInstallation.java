@@ -32,7 +32,6 @@ import hudson.diagnosis.OldDataMonitor;
 import hudson.model.*;
 import hudson.slaves.NodeSpecific;
 import hudson.util.DescribableList;
-import hudson.util.StreamTaskListener;
 import hudson.util.XStream2;
 
 import java.io.Serializable;
@@ -41,11 +40,13 @@ import java.util.List;
 
 import com.thoughtworks.xstream.annotations.XStreamSerializable;
 import com.thoughtworks.xstream.converters.UnmarshallingContext;
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
 import jenkins.model.Jenkins;
 
 /**
- * Formalization of a tool installed in nodes used for builds
- * (examples include things like JDKs, Ants, Mavens, and Groovys)
+ * Formalization of a tool installed in nodes used for builds.
+ * (Examples include things like JDKs, Ants, Mavens, and Groovys.)
  *
  * <p>
  * You can define such a concept in your plugin entirely on your own, without extending from
@@ -64,6 +65,9 @@ import jenkins.model.Jenkins;
  * Implementations of this class are strongly encouraged to also implement {@link NodeSpecific}
  * (by using {@link #translateFor(Node, TaskListener)}) and
  * {@link EnvironmentSpecific} (by using {@link EnvVars#expand(String)}.)
+ * Callers such as build steps can then use {@link #translate(AbstractBuild,TaskListener)}
+ * and cast to the desired {@link ToolInstallation} subtype, or just call
+ * {@link NodeSpecific#forNode} and {@link EnvironmentSpecific#forEnvironment} directly.
  *
  * <p>
  * To contribute an extension point, put {@link Extension} on your {@link ToolDescriptor} class.
@@ -122,8 +126,9 @@ public abstract class ToolInstallation extends AbstractDescribableImpl<ToolInsta
      * 
      * The path can be in Unix format as well as in Windows format.
      * Must be absolute.
+     * @return the home directory location, if defined (may only be defined on the result of {@link #translate(Node, EnvVars, TaskListener)}, e.g. if unavailable on master)
      */
-    public String getHome() {
+    public @CheckForNull String getHome() {
         return home;
     }
 
@@ -155,9 +160,11 @@ public abstract class ToolInstallation extends AbstractDescribableImpl<ToolInsta
      *      Any lengthy operation (such as auto-installation) will report its progress here.
      * @return
      *      {@link ToolInstallation} object that is fully specialized.
+     * @see NodeSpecific
+     * @see EnvironmentSpecific
      * @since 1.460
      */
-    public ToolInstallation translate(Node node, EnvVars envs, TaskListener listener) throws IOException, InterruptedException {
+    public ToolInstallation translate(@Nonnull Node node, EnvVars envs, TaskListener listener) throws IOException, InterruptedException {
         ToolInstallation t = this;
         if (t instanceof NodeSpecific) {
             NodeSpecific n = (NodeSpecific) t;
@@ -207,6 +214,10 @@ public abstract class ToolInstallation extends AbstractDescribableImpl<ToolInsta
         for (ToolProperty<?> p : properties)
             _setTool(p, this);
         return this;
+    }
+
+    @Override public String toString() {
+        return getClass().getSimpleName() + "[" + name + "]";
     }
 
     /**
