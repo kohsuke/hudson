@@ -23,13 +23,13 @@
  */
 package hudson.console;
 
+import hudson.ExtensionPoint;
 import hudson.Functions;
 import hudson.MarkupText;
 import hudson.model.Describable;
 import jenkins.model.Jenkins;
 import hudson.model.Run;
 import hudson.remoting.ObjectInputStreamEx;
-import hudson.util.IOException2;
 import hudson.util.IOUtils;
 import hudson.util.UnbufferedBase64InputStream;
 import org.apache.commons.codec.binary.Base64OutputStream;
@@ -49,8 +49,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
+import com.jcraft.jzlib.GZIPInputStream;
+import com.jcraft.jzlib.GZIPOutputStream;
 
 /**
  * Data that hangs off from a console output.
@@ -120,7 +120,7 @@ import java.util.zip.GZIPOutputStream;
  * @see Functions#generateConsoleAnnotationScriptAndStylesheet()
  * @since 1.349
  */
-public abstract class ConsoleNote<T> implements Serializable, Describable<ConsoleNote<?>> {
+public abstract class ConsoleNote<T> implements Serializable, Describable<ConsoleNote<?>>, ExtensionPoint {
     /**
      * When the line of a console output that this annotation is attached is read by someone,
      * a new {@link ConsoleNote} is de-serialized and this method is invoked to annotate that line.
@@ -171,16 +171,22 @@ public abstract class ConsoleNote<T> implements Serializable, Describable<Consol
     private ByteArrayOutputStream encodeToBytes() throws IOException {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         ObjectOutputStream oos = new ObjectOutputStream(new GZIPOutputStream(buf));
-        oos.writeObject(this);
-        oos.close();
+        try {
+            oos.writeObject(this);
+        } finally {
+            oos.close();
+        }
 
         ByteArrayOutputStream buf2 = new ByteArrayOutputStream();
 
         DataOutputStream dos = new DataOutputStream(new Base64OutputStream(buf2,true,-1,null));
-        buf2.write(PREAMBLE);
-        dos.writeInt(buf.size());
-        buf.writeTo(dos);
-        dos.close();
+        try {
+            buf2.write(PREAMBLE);
+            dos.writeInt(buf.size());
+            buf.writeTo(dos);
+        } finally {
+            dos.close();
+        }
         buf2.write(POSTAMBLE);
         return buf2;
     }
@@ -227,7 +233,7 @@ public abstract class ConsoleNote<T> implements Serializable, Describable<Consol
         } catch (Error e) {
             // for example, bogus 'sz' can result in OutOfMemoryError.
             // package that up as IOException so that the caller won't fatally die.
-            throw new IOException2(e);
+            throw new IOException(e);
         }
     }
 

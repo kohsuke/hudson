@@ -30,6 +30,8 @@ import com.sun.jna.Native;
 import com.sun.jna.Memory;
 import com.sun.jna.NativeLong;
 import com.sun.jna.ptr.IntByReference;
+import hudson.os.PosixAPI;
+import jnr.posix.POSIX;
 import org.jvnet.libpam.impl.CLibrary.passwd;
 
 /**
@@ -38,7 +40,7 @@ import org.jvnet.libpam.impl.CLibrary.passwd;
  * <p>
  * Not available on all platforms (such as Linux/PPC, IBM mainframe, etc.), so the caller should recover gracefully
  * in case of {@link LinkageError}. See HUDSON-4820.
- *
+ * <p>Consider deprecating all methods present also in {@link POSIX} (as obtained by {@link PosixAPI#jnr}).
  * @author Kohsuke Kawaguchi
  */
 public interface GNUCLibrary extends Library {
@@ -53,7 +55,8 @@ public interface GNUCLibrary extends Library {
     int chdir(String dir);
     int getdtablesize();
 
-    int execv(String file, StringArray args);
+    int execv(String path, StringArray args);
+    int execvp(String file, StringArray args);
     int setenv(String name, String value,int replace);
     int unsetenv(String name);
     void perror(String msg);

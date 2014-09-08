@@ -24,6 +24,7 @@
 package hudson.os;
 
 import com.sun.solaris.EmbeddedSu;
+import hudson.FilePath;
 import hudson.Launcher.LocalLauncher;
 import hudson.Util;
 import hudson.model.Computer;
@@ -35,12 +36,13 @@ import hudson.remoting.VirtualChannel;
 import hudson.remoting.Which;
 import hudson.slaves.Channels;
 import hudson.util.ArgumentListBuilder;
-import static hudson.util.jna.GNUCLibrary.LIBC;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Collections;
+
+import static hudson.util.jna.GNUCLibrary.*;
 
 /**
  * Executes {@link Callable} as the super user, by forking a new process and executing the closure in there
@@ -62,6 +64,8 @@ public abstract class SU {
     /**
      * Returns a {@link VirtualChannel} that's connected to the priviledge-escalated environment.
      *
+     * @param listener
+     *      What this method is doing (such as what process it's invoking) will be sent here.
      * @return
      *      Never null. This may represent a channel to a separate JVM, or just {@link LocalChannel}.
      *      Close this channel and the SU environment will be shut down.
@@ -114,7 +118,7 @@ public abstract class SU {
     }
 
     private static LocalChannel newLocalChannel() {
-        return new LocalChannel(Computer.threadPoolForRemoting);
+        return FilePath.localChannel;
     }
 
     /**

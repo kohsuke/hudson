@@ -64,7 +64,10 @@ public class TestPluginManager extends PluginManager {
     protected Collection<String> loadBundledPlugins() throws Exception {
         Set<String> names = new HashSet<String>();
 
-        File[] children = new File(WarExploder.getExplodedDir(),"WEB-INF/plugins").listFiles();
+        File bundledPlugins = new File(WarExploder.getExplodedDir(), "WEB-INF/plugins");
+        File[] children = bundledPlugins.listFiles();
+        if (children==null)
+            throw new Error("Unable to find "+bundledPlugins);
         for (File child : children) {
             try {
                 names.add(child.getName());
@@ -110,10 +113,20 @@ public class TestPluginManager extends PluginManager {
         return names;
     }
     
+    // Overwrite PluginManager#stop, not to release plugins in each tests.
+    // Releasing plugins result fail to access files in webapp directory in following tests.
     @Override
     public void stop() {
         for (PluginWrapper p : activePlugins)
             p.stop();
+    }
+
+    /**
+     * As we don't actually shut down classloaders, we instead provide this method that does
+     * what {@link #stop()} normally does.
+     */
+    private void reallyStop() {
+        super.stop();
     }
 
     private static final Logger LOGGER = Logger.getLogger(TestPluginManager.class.getName());
@@ -121,6 +134,21 @@ public class TestPluginManager extends PluginManager {
     static {
         try {
             INSTANCE = new TestPluginManager();
+            Runtime.getRuntime().addShutdownHook(new Thread("delete " + INSTANCE.rootDir) {
+                @Override public void run() {
+                    // Shutdown and release plugins as in PluginManager#stop
+                    ((TestPluginManager)INSTANCE).reallyStop();
+
+                    // allow JVM cleanup handles of jar files...
+                    System.gc();
+
+                    try {
+                        Util.deleteRecursive(INSTANCE.rootDir);
+                    } catch (IOException x) {
+                        x.printStackTrace();
+                    }
+                }
+            });
         } catch (IOException e) {
             throw new Error(e);
         }

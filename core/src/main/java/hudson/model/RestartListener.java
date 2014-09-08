@@ -30,7 +30,7 @@ public abstract class RestartListener implements ExtensionPoint {
      * Returns all the registered {@link LabelFinder}s.
      */
     public static ExtensionList<RestartListener> all() {
-        return Jenkins.getInstance().getExtensionList(RestartListener.class);
+        return ExtensionList.lookup(RestartListener.class);
     }
 
     /**
@@ -51,8 +51,7 @@ public abstract class RestartListener implements ExtensionPoint {
     public static class Default extends RestartListener {
         @Override
         public boolean isReadyToRestart() throws IOException, InterruptedException {
-            Jenkins h = Jenkins.getInstance();
-            return h.overallLoad.computeTotalExecutors() <= h.overallLoad.computeIdleExecutors();
+            return new ComputerSet().getBusyExecutors() == 0;
         }
     }
 }
