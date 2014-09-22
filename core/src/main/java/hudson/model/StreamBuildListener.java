@@ -70,6 +70,7 @@ public class StreamBuildListener extends StreamTaskListener implements BuildList
         if (causes==null || causes.isEmpty())
             l.println("Started");
         else for (Cause cause : causes) {
+            // TODO elide duplicates as per CauseAction.getCauseCounts (used in summary.jelly)
             cause.print(this);
         }
     }

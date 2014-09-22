@@ -58,7 +58,7 @@ import org.kohsuke.stapler.StaplerResponse;
  *
  * @author Tom Huybrechts
  */
-public class MyViewsProperty extends UserProperty implements ViewGroup, Action, StaplerFallback {
+public class MyViewsProperty extends UserProperty implements ModifiableViewGroup, Action, StaplerFallback {
     private String primaryViewName;
 
     /**
@@ -136,6 +136,7 @@ public class MyViewsProperty extends UserProperty implements ViewGroup, Action, 
         viewGroupMixIn.onViewRenamed(view,oldName,newName);
     }
 
+    @Override
     public void addView(View view) throws IOException {
         viewGroupMixIn.addView(view);
     }
@@ -145,7 +146,7 @@ public class MyViewsProperty extends UserProperty implements ViewGroup, Action, 
     }
 
     public HttpResponse doIndex() {
-        return new HttpRedirect("view/" + getPrimaryView().getViewName() + "/");
+        return new HttpRedirect("view/" + Util.rawEncode(getPrimaryView().getViewName()) + "/");
     }
 
     public synchronized void doCreateView(StaplerRequest req, StaplerResponse rsp)
@@ -262,5 +263,5 @@ public class MyViewsProperty extends UserProperty implements ViewGroup, Action, 
 		}
 		
     }
-    
+   
 }

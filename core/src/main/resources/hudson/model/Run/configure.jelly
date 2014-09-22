@@ -37,11 +37,15 @@ THE SOFTWARE.
         </f:entry>
 
         <j:if test="${h.hasPermission(it,it.UPDATE)}">
-          <f:block>
+          <f:bottomButtonBar>
             <f:submit value="${%Save}" />
-          </f:block>
+            <f:apply />
+          </f:bottomButtonBar>
         </j:if>
       </f:form>
+      <j:if test="${h.hasPermission(it,it.UPDATE)}">
+        <st:adjunct includes="lib.form.confirm" />
+      </j:if>
     </l:main-panel>
   </l:layout>
 </j:jelly>

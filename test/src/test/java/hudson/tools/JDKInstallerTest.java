@@ -2,7 +2,6 @@ package hudson.tools;
 
 import com.gargoylesoftware.htmlunit.html.HtmlForm;
 import com.gargoylesoftware.htmlunit.html.HtmlPage;
-import hudson.model.DownloadService;
 import hudson.tools.JDKInstaller.DescriptorImpl;
 import org.jvnet.hudson.test.HudsonTestCase;
 import hudson.model.JDK;
@@ -31,13 +30,10 @@ import org.xml.sax.SAXException;
  * @author Kohsuke Kawaguchi
  */
 public class JDKInstallerTest extends HudsonTestCase {
-    boolean old;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        old = DownloadService.neverUpdate;
-        DownloadService.neverUpdate = false;
 
         File f = new File(new File(System.getProperty("user.home")),".jenkins-ci.org");
         if (!f.exists()) {
@@ -61,12 +57,6 @@ public class JDKInstallerTest extends HudsonTestCase {
         }
     }
 
-    @Override
-    protected void tearDown() throws Exception {
-        DownloadService.neverUpdate = old;
-        super.tearDown();
-    }
-
     public void testEnterCredential() throws Exception {
         HtmlPage p = createWebClient().goTo("/descriptorByName/hudson.tools.JDKInstaller/enterCredential");
         HtmlForm form = p.getFormByName("postCredential");
@@ -86,12 +76,12 @@ public class JDKInstallerTest extends HudsonTestCase {
         File tmp = env.temporaryDirectoryAllocator.allocate();
         JDKInstaller installer = new JDKInstaller("jdk-6u13-oth-JPR@CDS-CDS_Developer", true);
 
-        hudson.getJDKs().add(new JDK("test",tmp.getAbsolutePath(), Arrays.asList(
+        jenkins.getJDKs().add(new JDK("test",tmp.getAbsolutePath(), Arrays.asList(
                 new InstallSourceProperty(Arrays.<ToolInstaller>asList(installer)))));
 
         submit(new WebClient().goTo("configure").getFormByName("config"));
 
-        JDK jdk = hudson.getJDK("test");
+        JDK jdk = jenkins.getJDK("test");
         InstallSourceProperty isp = jdk.getProperties().get(InstallSourceProperty.class);
         assertEquals(1,isp.installers.size());
         assertEqualBeans(installer,isp.installers.get(JDKInstaller.class),"id,acceptLicense");
@@ -153,7 +143,7 @@ public class JDKInstallerTest extends HudsonTestCase {
         JDK jdk = new JDK("test", tmp.getAbsolutePath(), Arrays.asList(
                 new InstallSourceProperty(Arrays.<ToolInstaller>asList(installer))));
 
-        hudson.getJDKs().add(jdk);
+        jenkins.getJDKs().add(jdk);
 
         FreeStyleProject p = createFreeStyleProject();
         p.setJDK(jdk);
@@ -185,7 +175,7 @@ public class JDKInstallerTest extends HudsonTestCase {
             File d = env.temporaryDirectoryAllocator.allocate();
 
             new JDKInstaller("",true).install(new LocalLauncher(l),Platform.LINUX,
-                    new JDKInstaller.FilePathFileSystem(hudson),l,d.getPath(),bundle.getPath());
+                    new JDKInstaller.FilePathFileSystem(jenkins),l,d.getPath(),bundle.getPath());
 
             assertTrue(new File(d,"bin/java").exists());
         } finally {

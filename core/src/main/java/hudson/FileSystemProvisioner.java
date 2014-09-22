@@ -24,14 +24,12 @@
 package hudson;
 
 import hudson.FilePath.TarCompression;
-import hudson.matrix.MatrixBuild;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Computer;
 import hudson.model.Describable;
 import hudson.model.Job;
 import hudson.model.TaskListener;
-import hudson.util.DirScanner.Glob;
 import hudson.util.io.ArchiverFactory;
 import jenkins.model.Jenkins;
 import hudson.model.listeners.RunListener;
@@ -126,7 +124,7 @@ public abstract class FileSystemProvisioner implements ExtensionPoint, Describab
      *
      * <p>
      * This method can prepare the underlying file system in preparation
-     * for the later {@link #snapshot(AbstractBuild, FilePath, TaskListener)}.
+     * for the later {@link FileSystemProvisioner.Default#snapshot(AbstractBuild, FilePath, TaskListener)}.
      *
      * TODO : the method needs to be able to see the snapshot would
      * be later needed. In fact, perhaps we should only call this method
@@ -158,7 +156,7 @@ public abstract class FileSystemProvisioner implements ExtensionPoint, Describab
      * <p>
      * The state of the build when this method is invoked depends on
      * the project type. Most would call this at the end of the build,
-     * but for example {@link MatrixBuild} would call this after
+     * but for example {@code MatrixBuild} would call this after
      * SCM check out so that the state of the fresh workspace
      * can be then propagated to elsewhere.
      *

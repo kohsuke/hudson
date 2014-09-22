@@ -41,6 +41,7 @@ import hudson.init.InitMilestone;
 import hudson.model.Descriptor;
 import hudson.model.Hudson;
 import jenkins.ExtensionComponentSet;
+import jenkins.ExtensionFilter;
 import jenkins.ExtensionRefreshException;
 import jenkins.ProxyInjector;
 import jenkins.model.Jenkins;
@@ -72,10 +73,11 @@ import java.lang.reflect.Method;
  *
  * <p>
  * {@link ExtensionFinder} itself is an extension point, but to avoid infinite recursion,
- * Hudson discovers {@link ExtensionFinder}s through {@link Sezpoz} and that alone.
+ * Jenkins discovers {@link ExtensionFinder}s through {@link Sezpoz} and that alone.
  *
  * @author Kohsuke Kawaguchi
  * @since 1.286
+ * @see ExtensionFilter
  */
 public abstract class ExtensionFinder implements ExtensionPoint {
     /**
@@ -126,7 +128,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
      * <p>
      * This method should return all the known components at the time of the call, including
      * those that are discovered later via {@link #refresh()}, even though those components
-     * are separately retruend in {@link ExtensionComponentSet}.
+     * are separately returned in {@link ExtensionComponentSet}.
      *
      * @param <T>
      *      The type of the extension points. This is not bound to {@link ExtensionPoint} because
@@ -411,16 +413,34 @@ public abstract class ExtensionFinder implements ExtensionPoint {
          * This is necessary as a failure to load one plugin shouldn't fail the startup of the entire Jenkins.
          * Instead, we should just drop the failing plugins.
          */
-        public static final Scope FAULT_TOLERANT_SCOPE = new Scope() {
-            public <T> Provider<T> scope(Key<T> key, Provider<T> unscoped) {
+        public static final Scope FAULT_TOLERANT_SCOPE = new FaultTolerantScope(true);
+        private static final Scope QUIET_FAULT_TOLERANT_SCOPE = new FaultTolerantScope(false);
+        
+        private static final class FaultTolerantScope implements Scope {
+            private final boolean verbose;
+            FaultTolerantScope(boolean verbose) {
+                this.verbose = verbose;
+            }
+            public <T> Provider<T> scope(final Key<T> key, final Provider<T> unscoped) {
                 final Provider<T> base = Scopes.SINGLETON.scope(key,unscoped);
                 return new Provider<T>() {
                     public T get() {
                         try {
                             return base.get();
                         } catch (Exception e) {
-                            LOGGER.log(Level.WARNING,"Failed to instantiate. Skipping this component",e);
+                            error(key, e);
                             return null;
+                        } catch (LinkageError e) {
+                            error(key, e);
+                            return null;
+                        }
+                    }
+                    void error(Key<T> key, Throwable x) {
+                        if (verbose) {
+                            LOGGER.log(Level.WARNING, "Failed to instantiate " + key + "; skipping this component", x);
+                        } else {
+                            LOGGER.log(Level.WARNING, "Failed to instantiate optional component {0}; skipping", key.getTypeLiteral());
+                            LOGGER.log(Level.FINE, key.toString(), x);
                         }
                     }
                 };
@@ -479,16 +499,18 @@ public abstract class ExtensionFinder implements ExtensionPoint {
 
                 for (final IndexItem<?,Object> item : index) {
                     id++;
+                    boolean optional = isOptional(item.annotation());
                     try {
                         AnnotatedElement e = item.element();
                         Annotation a = item.annotation();
                         if (!isActive(a,e))   continue;
 
+                        Scope scope = optional ? QUIET_FAULT_TOLERANT_SCOPE : FAULT_TOLERANT_SCOPE;
                         if (e instanceof Class) {
                             Key key = Key.get((Class)e);
                             resolve((Class)e);
                             annotations.put(key,a);
-                            bind(key).in(FAULT_TOLERANT_SCOPE);
+                            bind(key).in(scope);
                         } else {
                             Class extType;
                             if (e instanceof Field) {
@@ -508,15 +530,15 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                                     public Object get() {
                                         return instantiate(item);
                                     }
-                                }).in(FAULT_TOLERANT_SCOPE);
+                                }).in(scope);
                         }
                     } catch (LinkageError e) {
                         // sometimes the instantiation fails in an indirect classloading failure,
                         // which results in a LinkageError
-                        LOGGER.log(isOptional(item.annotation()) ? Level.FINE : Level.WARNING,
+                        LOGGER.log(optional ? Level.FINE : Level.WARNING,
                                    "Failed to load "+item.className(), e);
                     } catch (InstantiationException e) {
-                        LOGGER.log(isOptional(item.annotation()) ? Level.FINE : Level.WARNING,
+                        LOGGER.log(optional ? Level.FINE : Level.WARNING,
                                    "Failed to load "+item.className(), e);
                     }
                 }
