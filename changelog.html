@@ -56,6 +56,62 @@ Upcoming changes</a>
 <div id="trunk" style="display:none"><!--=TRUNK-BEGIN=-->
 <ul class=image>
   <li class=bug>
+    Search box did not work well inside folders.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-24433">issue 24433</a>)
+  <li class=rfe>
+    Advertise JNLP slave agents to the correct host name, even in the presence of a reverse proxy.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27218">issue 27218</a>)
+  <li class=rfe>
+    Advertised TCP slave agent port number is made tweakable.
+</ul>
+</div><!--=TRUNK-END=-->
+<h3><a name=v1.610>What's new in 1.610</a> (2015/04/19)</h3>
+<ul class=image>
+  <li class=bug>
+    Since 1.598 overrides of <code>Descriptor.getId</code> were not correctly handled by form binding, breaking at least the CloudBees Templates plugin.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-26781">issue 26781</a>)
+  <li class=bug>
+    Archiving of large artifacts. Tar implementation cannot handle files having a size >8GB.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-10629">issue 10629</a>)
+  <li class=bug>
+    The queue state was not updated between scheduling builds.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27708">issue 27708</a>,
+    <a href="https://issues.jenkins-ci.org/browse/JENKINS-27871">issue 27871</a>)
+</ul>
+<h3><a name=v1.609>What's new in 1.609</a> (2015/04/12)</h3>
+<ul class=image>
+  <li class=bug>
+    When concurrent builds are enabled, artifact retention policy may delete artifact being 
+    used by an actually running build.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27836">issue 27836</a>)
+  <li class=bug>
+    Documentation for $BUILD_ID did not reflect current reality
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-26520">issue 26520</a>)
+</ul>
+<h3><a name=v1.608>What's new in 1.608</a> (2015/04/05)</h3>
+<ul class=image>
+  <li class=bug>
+    PeepholePermalink RunListenerImpl oncompleted should be triggered before downstream builds are triggered.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-20989">issue 20989</a>)
+  <li class=bug>
+    NPE when /script used on offline slave.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-26751">issue 26751</a>)
+  <li class=rfe>
+    Make periodic workspace cleanup configurable through system properties.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-21322">issue 21322</a>)
+  <li class=bug>
+    Do not offer to restart on /restart and /safeRestart if the configuration does not support it.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27414">issue 27414</a>)
+  <li class=rfe>
+    Polling was skipped while quieting down, resulting in ignored commit notifications. This behavior was changed.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-26208">issue 26208</a>)
+  <li class=rfe>
+    Starting this version, native packages are produced from <a href="https://github.com/jenkinsci/packaging">the new repository</a>.
+    File issues related to installers and packages in the <code>packaging</code> component.
+</ul>
+<h3><a name=v1.607>What's new in 1.607</a> (2015/03/30)</h3>
+<ul class=image>
+  <li class=bug>
     JSONP served with the wrong MIME type and rejected by Chrome.
     (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27607">issue 27607</a>)
   <li class=bug>
@@ -73,6 +129,8 @@ Upcoming changes</a>
   <li class=rfe>
     Refactor the Queue and Nodes to use a consistent locking strategy
     (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27565">issue 27565</a>)
+    <strong>Note</strong> that this change involved moving slave definitions outside the main <code>config.xml</code> file.
+    If you downgrade after this, your slave settings will be lost.
   <li class=bug>
     Makes the Jenkins is loading screen not block on the extensions loading lock
     (<a href="https://issues.jenkins-ci.org/browse/JENKINS-27563">issue 27563</a>)
@@ -94,8 +152,10 @@ Upcoming changes</a>
   <li class=bug>
     Ensure that the LoadStatistics return a self-consistent result.
     (<a href="https://issues.jenkins-ci.org/browse/JENKINS-21618">issue 21618</a>)
+  <li class=bug>
+    Build reports to be running for 45 yr and counting.
+    (<a href="https://issues.jenkins-ci.org/browse/JENKINS-26777">issue 26777</a>)
 </ul>
-</div><!--=TRUNK-END=-->
 <h3><a name=v1.606>What's new in 1.606</a> (2015/03/23)</h3>
 <ul class=image>
   <li class=bug>

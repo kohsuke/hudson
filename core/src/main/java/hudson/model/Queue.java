@@ -519,6 +519,7 @@ public class Queue extends ResourceController implements Saveable {
      * @deprecated as of 1.311
      *      Use {@link #schedule(AbstractProject)}
      */
+    @Deprecated
     public boolean add(AbstractProject p) {
         return schedule(p)!=null;
     }
@@ -541,6 +542,7 @@ public class Queue extends ResourceController implements Saveable {
      * @deprecated as of 1.311
      *      Use {@link #schedule(Task, int)}
      */
+    @Deprecated
     public boolean add(AbstractProject p, int quietPeriod) {
         return schedule(p, quietPeriod)!=null;
     }
@@ -549,6 +551,7 @@ public class Queue extends ResourceController implements Saveable {
      * @deprecated as of 1.521
      *  Use {@link #schedule2(Task, int, List)}
      */
+    @Deprecated
     public WaitingItem schedule(Task p, int quietPeriod, List<Action> actions) {
         return schedule2(p, quietPeriod, actions).getCreateItem();
     }
@@ -684,6 +687,7 @@ public class Queue extends ResourceController implements Saveable {
      * @deprecated as of 1.311
      *      Use {@link #schedule(Task, int)}
      */
+    @Deprecated
     public boolean add(Task p, int quietPeriod) {
     	return schedule(p, quietPeriod)!=null;
     }
@@ -696,6 +700,7 @@ public class Queue extends ResourceController implements Saveable {
      * @deprecated as of 1.311
      *      Use {@link #schedule(Task, int, Action...)}
      */
+    @Deprecated
     public boolean add(Task p, int quietPeriod, Action... actions) {
     	return schedule(p, quietPeriod, actions)!=null;
     }
@@ -1335,7 +1340,10 @@ public class Queue extends ResourceController implements Saveable {
             final QueueSorter s = sorter;
             if (s != null)
                 s.sortBuildableItems(buildables);
-
+            
+            // Ensure that identification of blocked tasks is using the live state: JENKINS-27708 & JENKINS-27871
+            updateSnapshot();
+            
             // allocate buildable jobs to executors
             for (BuildableItem p : new ArrayList<BuildableItem>(
                     buildables)) {// copy as we'll mutate the list in the loop
@@ -1372,6 +1380,18 @@ public class Queue extends ResourceController implements Saveable {
                     makePending(p);
                 else
                     LOGGER.log(Level.FINE, "BuildableItem {0} with empty work units!?", p);
+                                
+                // Ensure that identification of blocked tasks is using the live state: JENKINS-27708 & JENKINS-27871
+                // The creation of a snapshot itself should be relatively cheap given the expected rate of
+                // job execution. You probably would need 100's of jobs starting execution every iteration
+                // of maintain() before this could even start to become an issue and likely the calculation
+                // of isBuildBlocked(p) will become a bottleneck before updateSnapshot() will. Additionally
+                // since the snapshot itself only ever has at most one reference originating outside of the stack
+                // it should remain in the eden space and thus be cheap to GC.
+                // See https://issues.jenkins-ci.org/browse/JENKINS-27708?focusedCommentId=225819&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-225819
+                // or https://issues.jenkins-ci.org/browse/JENKINS-27708?focusedCommentId=225906&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-225906
+                // for alternative fixes of this issue.
+                updateSnapshot();
             }
         } finally { updateSnapshot(); } } finally {
             lock.unlock();
@@ -1438,6 +1458,7 @@ public class Queue extends ResourceController implements Saveable {
     }
 
     /** @deprecated Use {@link #isBlockedByShutdown} instead. */
+    @Deprecated
     public static boolean ifBlockedByHudsonShutdown(Task task) {
         return isBlockedByShutdown(task);
     }
@@ -1515,6 +1536,7 @@ public class Queue extends ResourceController implements Saveable {
          * @deprecated as of 1.330
          *      Use {@link CauseOfBlockage#getShortDescription()} instead.
          */
+        @Deprecated
         String getWhyBlocked();
 
         /**

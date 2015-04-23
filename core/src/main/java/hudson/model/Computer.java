@@ -378,6 +378,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     /**
      * @deprecated since 2009-01-06.  Use {@link #connect(boolean)}
      */
+    @Deprecated
     public final void launch() {
         connect(true);
     }
@@ -477,6 +478,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
      * @deprecated as of 1.320.
      *      Use {@link #disconnect(OfflineCause)} and specify the cause.
      */
+    @Deprecated
     public Future<?> disconnect() {
         recordTermination();
         if (Util.isOverridden(Computer.class,getClass(),"disconnect",OfflineCause.class))
@@ -640,6 +642,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
      *      accidentally call this method.
      */
     @Exported
+    @Deprecated
     public boolean isTemporarilyOffline() {
         return temporarilyOffline;
     }
@@ -648,6 +651,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
      * @deprecated as of 1.320.
      *      Use {@link #setTemporarilyOffline(boolean, OfflineCause)}
      */
+    @Deprecated
     public void setTemporarilyOffline(boolean temporarilyOffline) {
         setTemporarilyOffline(temporarilyOffline,null);
     }
@@ -1051,6 +1055,7 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
      * @deprecated as of 1.292
      *      Use {@link #getEnvironment()} instead.
      */
+    @Deprecated
     public Map<String,String> getEnvVars() throws IOException, InterruptedException {
         return getEnvironment();
     }
@@ -1150,11 +1155,11 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
             try {
                 InetAddress ia = InetAddress.getByName(address);
                 if(!(ia instanceof Inet4Address)) {
-                    LOGGER.fine(address+" is not an IPv4 address");
+                    LOGGER.log(Level.FINE, "{0} is not an IPv4 address", address);
                     continue;
                 }
                 if(!ComputerPinger.checkIsReachable(ia, 3)) {
-                    LOGGER.fine(address+" didn't respond to ping");
+                    LOGGER.log(Level.FINE, "{0} didn't respond to ping", address);
                     continue;
                 }
                 cachedHostName = ia.getCanonicalHostName();
@@ -1162,7 +1167,10 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
                 return cachedHostName;
             } catch (IOException e) {
                 // if a given name fails to parse on this host, we get this error
-                LOGGER.log(Level.FINE, "Failed to parse "+address,e);
+                LogRecord lr = new LogRecord(Level.FINE, "Failed to parse {0}");
+                lr.setThrown(e);
+                lr.setParameters(new Object[]{address});
+                LOGGER.log(lr);
             }
         }
 
@@ -1186,27 +1194,29 @@ public /*transient*/ abstract class Computer extends Actionable implements Acces
     }
 
     private static class ListPossibleNames extends MasterToSlaveCallable<List<String>,IOException> {
+        private static final Logger LOGGER = Logger.getLogger(ListPossibleNames.class.getName());
+        
         public List<String> call() throws IOException {
             List<String> names = new ArrayList<String>();
 
             Enumeration<NetworkInterface> nis = NetworkInterface.getNetworkInterfaces();
             while (nis.hasMoreElements()) {
                 NetworkInterface ni =  nis.nextElement();
-                LOGGER.fine("Listing up IP addresses for "+ni.getDisplayName());
+                LOGGER.log(Level.FINE, "Listing up IP addresses for {0}", ni.getDisplayName());
                 Enumeration<InetAddress> e = ni.getInetAddresses();
                 while (e.hasMoreElements()) {
                     InetAddress ia =  e.nextElement();
                     if(ia.isLoopbackAddress()) {
-                        LOGGER.fine(ia+" is a loopback address");
+                        LOGGER.log(Level.FINE, "{0} is a loopback address", ia);
                         continue;
                     }
 
                     if(!(ia instanceof Inet4Address)) {
-                        LOGGER.fine(ia+" is not an IPv4 address");
+                        LOGGER.log(Level.FINE, "{0} is not an IPv4 address", ia);
                         continue;
                     }
 
-                    LOGGER.fine(ia+" is a viable candidate");
+                    LOGGER.log(Level.FINE, "{0} is a viable candidate", ia);
                     names.add(ia.getHostAddress());
                 }
             }

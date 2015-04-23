@@ -316,7 +316,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     public transient final Lookup lookup = new Lookup();
 
     /**
-     * We update this field to the current version of Hudson whenever we save {@code config.xml}.
+     * We update this field to the current version of Jenkins whenever we save {@code config.xml}.
      * This can be used to detect when an upgrade happens from one version to next.
      *
      * <p>
@@ -351,7 +351,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     /**
      * Controls how the
      * <a href="http://en.wikipedia.org/wiki/Authorization">authorization</a>
-     * is handled in Hudson.
+     * is handled in Jenkins.
      * <p>
      * This ultimately controls who has access to what.
      *
@@ -362,7 +362,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     /**
      * Controls a part of the
      * <a href="http://en.wikipedia.org/wiki/Authentication">authentication</a>
-     * handling in Hudson.
+     * handling in Jenkins.
      * <p>
      * Intuitively, this corresponds to the user database.
      *
@@ -466,7 +466,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     };
 
     /**
-     * {@link Computer}s in this Hudson system. Read-only.
+     * {@link Computer}s in this Jenkins system. Read-only.
      */
     protected transient final Map<Node,Computer> computers = new CopyOnWriteMap.Hash<Node,Computer>();
 
@@ -615,6 +615,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      *      slaves and free-roaming jobs in the queue.
      */
     @Restricted(NoExternalUse.class)
+    @Deprecated
     public transient final NodeProvisioner overallNodeProvisioner = unlabeledNodeProvisioner;
 
 
@@ -644,7 +645,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     public transient final List<AdministrativeMonitor> administrativeMonitors = getExtensionList(AdministrativeMonitor.class);
 
     /**
-     * Widgets on Hudson.
+     * Widgets on Jenkins.
      */
     private transient final List<Widget> widgets = getExtensionList(Widget.class);
 
@@ -881,7 +882,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      * Executes a reactor.
      *
      * @param is
-     *      If non-null, this can be consulted for ignoring some tasks. Only used during the initialization of Hudson.
+     *      If non-null, this can be consulted for ignoring some tasks. Only used during the initialization of Jenkins.
      */
     private void executeReactor(final InitStrategy is, TaskBuilder... builders) throws IOException, InterruptedException, ReactorException {
         Reactor reactor = new Reactor(builders) {
@@ -1005,6 +1006,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      * Does this {@link View} has any associated user information recorded?
      * @deprecated Potentially very expensive call; do not use from Jelly views.
      */
+    @Deprecated
     public boolean hasPeople() {
         return View.People.isApplicable(items.values());
     }
@@ -1022,6 +1024,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      *      Due to the past security advisory, this value should not be used any more to protect sensitive information.
      *      See {@link ConfidentialStore} and {@link ConfidentialKey} for how to store secrets.
      */
+    @Deprecated
     public String getSecretKey() {
         return secretKey;
     }
@@ -1032,6 +1035,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      * @deprecated
      *       See {@link #getSecretKey()}.
      */
+    @Deprecated
     public SecretKey getSecretKeyAsAES128() {
         return Util.toAes128Key(secretKey);
     }
@@ -1114,6 +1118,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      * @deprecated
      *      UI method. Not meant to be used programatically.
      */
+    @Deprecated
     public ComputerSet getComputer() {
         return new ComputerSet();
     }
@@ -1186,7 +1191,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Gets the {@link Descriptor} instance in the current Hudson by its type.
+     * Gets the {@link Descriptor} instance in the current Jenkins by its type.
      */
     public <T extends Descriptor> T getDescriptorByType(Class<T> type) {
         for( Descriptor d : getExtensionList(Descriptor.class) )
@@ -1343,7 +1348,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      *
      * <p>
      * To register an {@link Action}, implement {@link RootAction} extension point, or write code like
-     * {@code Hudson.getInstance().getActions().add(...)}.
+     * {@code Jenkins.getInstance().getActions().add(...)}.
      *
      * @return
      *      Live list where the changes can be made. Can be empty but never null.
@@ -1481,7 +1486,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Returns the primary {@link View} that renders the top-page of Hudson.
+     * Returns the primary {@link View} that renders the top-page of Jenkins.
      */
     @Exported
     public View getPrimaryView() {
@@ -1517,7 +1522,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      *
      * <p>
      * This method continues to return true until the system configuration is saved, at which point
-     * {@link #version} will be overwritten and Hudson forgets the upgrade history.
+     * {@link #version} will be overwritten and Jenkins forgets the upgrade history.
      *
      * <p>
      * To handle SNAPSHOTS correctly, pass in "1.N.*" to test if it's upgrading from the version
@@ -1661,7 +1666,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
 
 
     /**
-     * Gets the slave node of the give name, hooked under this Hudson.
+     * Gets the slave node of the give name, hooked under this Jenkins.
      */
     public @CheckForNull Node getNode(String name) {
         return nodes.getNode(name);
@@ -1687,14 +1692,14 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Adds one more {@link Node} to Hudson.
+     * Adds one more {@link Node} to Jenkins.
      */
     public void addNode(Node n) throws IOException {
         nodes.addNode(n);
     }
 
     /**
-     * Removes a {@link Node} from Hudson.
+     * Removes a {@link Node} from Jenkins.
      */
     public void removeNode(@Nonnull Node n) throws IOException {
         nodes.removeNode(n);
@@ -1904,7 +1909,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Gets the absolute URL of Hudson top page, such as {@code http://localhost/hudson/}.
+     * Gets the absolute URL of Jenkins top page, such as {@code http://localhost/jenkins/}.
      *
      * <p>
      * Unlike {@link #getRootUrl()}, which uses the manually configured value,
@@ -2070,8 +2075,8 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * If true, all the POST requests to Hudson would have to have crumb in it to protect
-     * Hudson from CSRF vulnerabilities.
+     * If true, all the POST requests to Jenkins would have to have crumb in it to protect
+     * Jenkins from CSRF vulnerabilities.
      */
     @Exported
     public boolean isUseCrumbs() {
@@ -2079,8 +2084,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Returns the constant that captures the three basic security modes
-     * in Hudson.
+     * Returns the constant that captures the three basic security modes in Jenkins.
      */
     public SecurityMode getSecurity() {
         // fix the variable so that this code works under concurrent modification to securityRealm.
@@ -2277,7 +2281,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Returns true if Hudson is quieting down.
+     * Returns true if Jenkins is quieting down.
      * <p>
      * No further jobs will be executed unless it
      * can be finished while other current pending builds
@@ -2507,7 +2511,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
 
     /**
      * Called by {@link Job#renameTo(String)} to update relevant data structure.
-     * assumed to be synchronized on Hudson by the caller.
+     * assumed to be synchronized on Jenkins by the caller.
      */
     public void onRenamed(TopLevelItem job, String oldName, String newName) throws IOException {
         items.remove(oldName);
@@ -2616,7 +2620,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
         final Set<String> loadedNames = Collections.synchronizedSet(new HashSet<String>());
 
         TaskGraphBuilder g = new TaskGraphBuilder();
-        Handle loadHudson = g.requires(EXTENSIONS_AUGMENTED).attains(JOB_LOADED).add("Loading global config", new Executable() {
+        Handle loadJenkins = g.requires(EXTENSIONS_AUGMENTED).attains(JOB_LOADED).add("Loading global config", new Executable() {
             public void run(Reactor session) throws Exception {
                 XmlFile cfg = getConfigFile();
                 if (cfg.exists()) {
@@ -2642,7 +2646,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
         });
 
         for (final File subdir : subdirs) {
-            g.requires(loadHudson).attains(JOB_LOADED).notFatal().add("Loading job "+subdir.getName(),new Executable() {
+            g.requires(loadJenkins).attains(JOB_LOADED).notFatal().add("Loading job "+subdir.getName(),new Executable() {
                 public void run(Reactor session) throws Exception {
                     if(!Items.getConfigFile(subdir).exists()) {
                         //Does not have job config file, so it is not a jenkins job hence skip it
@@ -2682,7 +2686,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
                 }
 
                 // initialize views by inserting the default view if necessary
-                // this is both for clean Hudson and for backward compatibility.
+                // this is both for clean Jenkins and for backward compatibility.
                 if(views.size()==0 || primaryView==null) {
                     View v = new AllView(Messages.Hudson_ViewName());
                     setViewOwner(v);
@@ -3298,7 +3302,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Perform a restart of Hudson, if we can.
+     * Perform a restart of Jenkins, if we can.
      *
      * This first replaces "app" to {@link HudsonIsRestarting}
      */
@@ -3317,7 +3321,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Queues up a restart of Hudson for when there are no builds running, if we can.
+     * Queues up a restart of Jenkins for when there are no builds running, if we can.
      *
      * This first replaces "app" to {@link HudsonIsRestarting}
      *
@@ -3339,7 +3343,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      */
     public void restart() throws RestartNotSupportedException {
         final Lifecycle lifecycle = Lifecycle.get();
-        lifecycle.verifyRestartable(); // verify that Hudson is restartable
+        lifecycle.verifyRestartable(); // verify that Jenkins is restartable
         servletContext.setAttribute("app", new HudsonIsRestarting());
 
         new Thread("restart thread") {
@@ -3356,9 +3360,9 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
                         listener.onRestart();
                     lifecycle.restart();
                 } catch (InterruptedException e) {
-                    LOGGER.log(Level.WARNING, "Failed to restart Hudson",e);
+                    LOGGER.log(Level.WARNING, "Failed to restart Jenkins",e);
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to restart Hudson",e);
+                    LOGGER.log(Level.WARNING, "Failed to restart Jenkins",e);
                 }
             }
         }.start();
@@ -3370,7 +3374,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      */
     public void safeRestart() throws RestartNotSupportedException {
         final Lifecycle lifecycle = Lifecycle.get();
-        lifecycle.verifyRestartable(); // verify that Hudson is restartable
+        lifecycle.verifyRestartable(); // verify that Jenkins is restartable
         // Quiet down so that we won't launch new builds.
         isQuietingDown = true;
 
@@ -3527,6 +3531,11 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
             if (!"POST".equals(req.getMethod())) {
                 throw HttpResponses.error(HttpURLConnection.HTTP_BAD_METHOD, "requires POST");
             }
+
+            if (channel == null) {
+                throw HttpResponses.error(HttpURLConnection.HTTP_NOT_FOUND, "Node is offline");
+            }
+
             try {
                 req.setAttribute("output",
                         RemotingDiagnostics.executeGroovy(text, channel));
@@ -3662,6 +3671,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      * Checks if a top-level view with the given name exists.
      * @deprecated 1.512
      */
+    @Deprecated
     public FormValidation doViewExistsCheck(@QueryParameter String value) {
         checkPermission(View.CREATE);
 
@@ -4026,6 +4036,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
          * @deprecated as of 1.558
          *      Use {@link FilePath#localChannel}
          */
+        @Deprecated
         public static final LocalChannel localChannel = FilePath.localChannel;
     }
 
@@ -4038,7 +4049,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Live view of recent {@link LogRecord}s produced by Hudson.
+     * Live view of recent {@link LogRecord}s produced by Jenkins.
      */
     public static List<LogRecord> logRecords = Collections.emptyList(); // initialized to dummy value to avoid NPE
 
@@ -4094,20 +4105,20 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     }
 
     /**
-     * Version number of this Hudson.
+     * Version number of this Jenkins.
      */
     public static String VERSION="?";
 
     /**
      * Parses {@link #VERSION} into {@link VersionNumber}, or null if it's not parseable as a version number
-     * (such as when Hudson is run with "mvn hudson-dev:run")
+     * (such as when Jenkins is run with "mvn hudson-dev:run")
      */
     public static VersionNumber getVersion() {
         try {
             return new VersionNumber(VERSION);
         } catch (NumberFormatException e) {
             try {
-                // for non-released version of Hudson, this looks like "1.345 (private-foobar), so try to approximate.
+                // for non-released version of Jenkins, this looks like "1.345 (private-foobar), so try to approximate.
                 int idx = VERSION.indexOf(' ');
                 if (idx>0)
                     return new VersionNumber(VERSION.substring(0,idx));
@@ -4148,7 +4159,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
 
     /**
      * Prefix to resources alongside view scripts.
-     * Strings like "/resources/VERSION", which avoids Hudson to pick up
+     * Strings like "/resources/VERSION", which avoids Jenkins to pick up
      * stale cache when the user upgrades to a different version.
      * <p>
      * Value computed in {@link WebAppMain}.
@@ -4160,6 +4171,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
     /**
      * @deprecated No longer used.
      */
+    @Deprecated
     public static boolean FLYWEIGHT_SUPPORT = true;
 
     /**
@@ -4171,6 +4183,7 @@ public class Jenkins extends AbstractCIBase implements DirectlyModifiableTopLeve
      *      This flag will have no effect.
      */
     @Restricted(NoExternalUse.class)
+    @Deprecated
     public static boolean CONCURRENT_BUILD = true;
 
     /**

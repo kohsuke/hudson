@@ -438,6 +438,7 @@ public class Functions {
      *      JEXL now supports the real ternary operator "x?y:z", so this work around
      *      is no longer necessary.
      */
+    @Deprecated
     public static Object ifThenElse(boolean cond, Object thenValue, Object elseValue) {
         return cond ? thenValue : elseValue;
     }
@@ -1573,6 +1574,7 @@ public class Functions {
      * @deprecated
      *      Use {@link #calcCheckUrl}
      */
+    @Deprecated
     public String getCheckUrl(String userDefined, Object descriptor, String field) {
         if(userDefined!=null || field==null)   return userDefined;
         if (descriptor instanceof Descriptor) {
@@ -1823,6 +1825,7 @@ public class Functions {
      * @deprecated as of 1.451
      *      Use {@link #getAvatar}
      */
+    @Deprecated
     public String getUserAvatar(User user, String avatarSize) {
         return getAvatar(user,avatarSize);
     }
@@ -1887,9 +1890,10 @@ public class Functions {
 
             TcpSlaveAgentListener tal = j.tcpSlaveAgentListener;
             if (tal !=null) {
-                rsp.setIntHeader("X-Hudson-CLI-Port", tal.getPort());
-                rsp.setIntHeader("X-Jenkins-CLI-Port", tal.getPort());
-                rsp.setIntHeader("X-Jenkins-CLI2-Port", tal.getPort());
+                int p = TcpSlaveAgentListener.CLI_PORT !=null ? TcpSlaveAgentListener.CLI_PORT : tal.getPort();
+                rsp.setIntHeader("X-Hudson-CLI-Port", p);
+                rsp.setIntHeader("X-Jenkins-CLI-Port", p);
+                rsp.setIntHeader("X-Jenkins-CLI2-Port", p);
                 rsp.setHeader("X-Jenkins-CLI-Host", TcpSlaveAgentListener.CLI_HOST_NAME);
             }
         }

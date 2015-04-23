@@ -717,9 +717,12 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
      * Gets the string that says how long the build took to run.
      */
     public @Nonnull String getDurationString() {
-        if(isBuilding())
+        if (hasntStartedYet()) {
+            return Messages.Run_NotStartedYet();
+        } else if (isBuilding()) {
             return Messages.Run_InProgressDuration(
                     Util.getTimeSpanString(System.currentTimeMillis()-startTime));
+        }
         return Util.getTimeSpanString(duration);
     }
 
@@ -981,6 +984,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
      *      This method is only intended for the remote API clients who cannot resolve relative references.
      */
     @Exported(visibility=2,name="url")
+    @Deprecated
     public final @Nonnull String getAbsoluteUrl() {
         return project.getAbsoluteUrl()+getNumber()+'/';
     }
@@ -1551,6 +1555,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
      * @deprecated as of 1.467
      *      Please use {@link RunExecution}
      */
+    @Deprecated
     protected abstract class Runner extends RunExecution {}
 
     /**
@@ -1672,6 +1677,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
      * @deprecated as of 1.467
      *      Use {@link #execute(RunExecution)}
      */
+    @Deprecated
     protected final void run(@Nonnull Runner job) {
         execute(job);
     }
@@ -1780,13 +1786,13 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
                 state = State.POST_PRODUCTION;
 
                 if (listener != null) {
+                    RunListener.fireCompleted(this,listener);
                     try {
                         job.cleanUp(listener);
                     } catch (Exception e) {
                         handleFatalBuildProblem(listener,e);
                         // too late to update the result now
                     }
-                    RunListener.fireCompleted(this,listener);
                     listener.finished(result);
                     listener.closeQuietly();
                 }
@@ -2102,6 +2108,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
      * @deprecated as of 1.352
      *      Use {@code getLogText().doProgressiveText(req,rsp)}
      */
+    @Deprecated
     public void doProgressiveLog( StaplerRequest req, StaplerResponse rsp) throws IOException {
         getLogText().doProgressText(req,rsp);
     }
@@ -2189,6 +2196,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
      * @deprecated as of 1.292
      *      Use {@link #getEnvironment(TaskListener)} instead.
      */
+    @Deprecated
     public Map<String,String> getEnvVars() {
         LOGGER.log(WARNING, "deprecated call to Run.getEnvVars\n\tat {0}", new Throwable().getStackTrace()[1]);
         try {
@@ -2203,6 +2211,7 @@ public abstract class Run <JobT extends Job<JobT,RunT>,RunT extends Run<JobT,Run
     /**
      * @deprecated as of 1.305 use {@link #getEnvironment(TaskListener)}
      */
+    @Deprecated
     public EnvVars getEnvironment() throws IOException, InterruptedException {
         LOGGER.log(WARNING, "deprecated call to Run.getEnvironment\n\tat {0}", new Throwable().getStackTrace()[1]);
         return getEnvironment(new LogTaskListener(LOGGER, Level.INFO));
