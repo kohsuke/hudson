@@ -48,6 +48,7 @@ public class OverallLoadStatistics extends LoadStatistics {
      */
     @Exported
     @Restricted(NoExternalUse.class)
+    @Deprecated
     public final MultiStageTimeSeries totalQueueLength = queueLength;
 
     public OverallLoadStatistics() {
@@ -75,7 +76,7 @@ public class OverallLoadStatistics extends LoadStatistics {
     }
 
     @Override
-    protected boolean matches(SubTask item) {
+    protected boolean matches(Queue.Item item, SubTask subTask) {
         return true;
     }
 

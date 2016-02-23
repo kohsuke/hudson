@@ -37,6 +37,7 @@ public class CliProtocol2 extends CliProtocol {
          * @deprecated as of 1.559
          *      Use {@link #Handler2(NioChannelHub, Socket)}
          */
+        @Deprecated
         public Handler2(Socket socket) {
             super(socket);
         }
@@ -59,7 +60,7 @@ public class CliProtocol2 extends CliProtocol {
 
                 try {
                     // HACK: TODO: move the transport support into modules
-                    Class<?> cls = Jenkins.getInstance().pluginManager.uberClassLoader.loadClass("org.jenkinsci.main.modules.instance_identity.InstanceIdentity");
+                    Class<?> cls = Jenkins.getActiveInstance().pluginManager.uberClassLoader.loadClass("org.jenkinsci.main.modules.instance_identity.InstanceIdentity");
                     Object iid = cls.getDeclaredMethod("get").invoke(null);
                     PrivateKey instanceId = (PrivateKey)cls.getDeclaredMethod("getPrivate").invoke(iid);
 

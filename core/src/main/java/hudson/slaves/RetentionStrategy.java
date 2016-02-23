@@ -28,7 +28,6 @@ import hudson.Util;
 import hudson.DescriptorExtensionList;
 import hudson.Extension;
 import hudson.model.*;
-import hudson.model.Queue.*;
 import hudson.util.DescriptorList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -115,6 +114,7 @@ public abstract class RetentionStrategy<T extends Computer> extends AbstractDesc
      * @deprecated as of 1.286
      *      Use {@link #all()} for read access, and {@link Extension} for registration.
      */
+    @Deprecated
     public static final DescriptorList<RetentionStrategy<?>> LIST = new DescriptorList<RetentionStrategy<?>>((Class)RetentionStrategy.class);
 
     /**
@@ -138,11 +138,7 @@ public abstract class RetentionStrategy<T extends Computer> extends AbstractDesc
 
         private final DescriptorImpl DESCRIPTOR = new DescriptorImpl();
 
-        class DescriptorImpl extends Descriptor<RetentionStrategy<?>> {
-            public String getDisplayName() {
-                return "";
-            }
-        }
+        class DescriptorImpl extends Descriptor<RetentionStrategy<?>> {}
     };
 
     /**
@@ -271,7 +267,7 @@ public abstract class RetentionStrategy<T extends Computer> extends AbstractDesc
                     // we've been idle for long enough
                     logger.log(Level.INFO, "Disconnecting computer {0} as it has been idle for {1}",
                             new Object[]{c.getName(), Util.getTimeSpanString(idleMilliseconds)});
-                    c.disconnect(OfflineCause.create(Messages._RetentionStrategy_Demand_OfflineIdle()));
+                    c.disconnect(new OfflineCause.IdleOfflineCause());
                 } else {
                     // no point revisiting until we can be confident we will be idle
                     return TimeUnit.MILLISECONDS.toMinutes(TimeUnit.MINUTES.toMillis(idleDelay) - idleMilliseconds);

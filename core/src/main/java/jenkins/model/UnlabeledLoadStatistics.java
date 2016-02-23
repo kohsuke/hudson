@@ -28,15 +28,12 @@ import hudson.model.LoadStatistics;
 import hudson.model.Node;
 import hudson.model.Node.Mode;
 import hudson.model.OverallLoadStatistics;
+import hudson.model.Queue;
 import hudson.model.Queue.Task;
 import hudson.model.queue.SubTask;
 import hudson.util.Iterators;
 
 import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Set;
 
 /**
  * {@link LoadStatistics} that track the "free roam" jobs (whose {@link Task#getAssignedLabel()} is null)
@@ -81,7 +78,11 @@ public class UnlabeledLoadStatistics extends LoadStatistics {
 
     @Override
     public int computeQueueLength() {
-        return Jenkins.getInstance().getQueue().countBuildableItemsFor(null);
+        final Jenkins j = Jenkins.getInstance();
+        if (j == null) { // Consider queue as empty when Jenkins is inactive
+            return 0;
+        }
+        return j.getQueue().strictCountBuildableItemsFor(null); 
     }
 
     @Override
@@ -90,8 +91,8 @@ public class UnlabeledLoadStatistics extends LoadStatistics {
     }
 
     @Override
-    protected boolean matches(SubTask item) {
-        return true;
+    protected boolean matches(Queue.Item item, SubTask subTask) {
+        return item.getAssignedLabelFor(subTask) == null;
     }
 
     private static class UnlabeledNodesIterable implements Iterable<Node> {
