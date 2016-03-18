@@ -1,12 +1,12 @@
 package jenkins.slaves;
 
 import hudson.Extension;
+import org.jenkinsci.remoting.engine.JnlpServerHandshake;
 import org.jenkinsci.remoting.nio.NioChannelHub;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.Socket;
-import java.util.Properties;
 
 /**
  * {@link JnlpSlaveAgentProtocol} Version 2.
@@ -36,6 +36,7 @@ public class JnlpSlaveAgentProtocol2 extends JnlpSlaveAgentProtocol {
          * @deprecated as of 1.559
          *      Use {@link #Handler2(NioChannelHub, Socket)}
          */
+        @Deprecated
         public Handler2(Socket socket) throws IOException {
             super(socket);
         }
@@ -54,11 +55,16 @@ public class JnlpSlaveAgentProtocol2 extends JnlpSlaveAgentProtocol {
             final String nodeName = request.getProperty("Node-Name");
 
             for (JnlpAgentReceiver recv : JnlpAgentReceiver.all()) {
-                if (recv.handle(nodeName,this))
-                    return;
+                try {
+                    if (recv.handle(nodeName,this))
+                        return;
+                } catch (AbstractMethodError e) {
+                    if (recv.handle(nodeName,new JnlpSlaveHandshake(this)))
+                        return;
+                }
             }
 
-            error("Unrecognized name: "+nodeName);
+            error("JNLP2-connect: rejected connection for node: " + nodeName);
         }
     }
 }

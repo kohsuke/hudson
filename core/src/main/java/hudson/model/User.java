@@ -151,9 +151,6 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
     @Nonnull
     public static IdStrategy idStrategy() {
         Jenkins j = Jenkins.getInstance();
-        if (j == null) {
-            return IdStrategy.CASE_INSENSITIVE;
-        }
         SecurityRealm realm = j.getSecurityRealm();
         if (realm == null) {
             return IdStrategy.CASE_INSENSITIVE;
@@ -241,6 +238,15 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
     @Exported
     public @CheckForNull String getDescription() {
         return description;
+    }
+
+
+    /**
+     * Sets the description of the user.
+     * @since 1.609
+     */
+    public void setDescription(String description) {
+        this.description = description;
     }
 
     /**
@@ -348,6 +354,7 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
      *      {@code create} is false.
      * @deprecated use {@link User#get(String, boolean, java.util.Map)}
      */
+    @Deprecated
     public static @Nullable User get(String idOrFullName, boolean create) {
         return get(idOrFullName, create, Collections.emptyMap());
     }
@@ -477,8 +484,18 @@ public class User extends AbstractModelObject implements AccessControlled, Descr
      * @since 1.172
      */
     public static @CheckForNull User current() {
-        Authentication a = Jenkins.getAuthentication();
-        if(a instanceof AnonymousAuthenticationToken)
+        return get(Jenkins.getAuthentication());
+    }
+
+    /**
+     * Gets the {@link User} object representing the supplied {@link Authentication} or
+     * {@code null} if the supplied {@link Authentication} is either anonymous or {@code null}
+     * @param a the supplied {@link Authentication} .
+     * @return a {@link User} object for the supplied {@link Authentication} or {@code null}
+     * @since 1.609
+     */
+    public static @CheckForNull User get(@CheckForNull Authentication a) {
+        if(a == null || a instanceof AnonymousAuthenticationToken)
             return null;
 
         // Since we already know this is a name, we can just call getOrCreate with the name directly.

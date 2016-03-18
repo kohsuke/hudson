@@ -24,24 +24,23 @@
 package hudson.tasks;
 
 import static org.junit.Assert.*;
-
-import com.gargoylesoftware.htmlunit.html.HtmlForm;
-import com.gargoylesoftware.htmlunit.html.HtmlPage;
-
 import hudson.Launcher;
 import hudson.maven.MavenModuleSet;
 import hudson.maven.MavenModuleSetBuild;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
+import hudson.model.Action;
 import hudson.model.BuildListener;
 import hudson.model.Cause;
 import hudson.model.Computer;
 import hudson.model.FreeStyleBuild;
 import hudson.model.FreeStyleProject;
+import hudson.model.DependencyGraph;
+import hudson.model.DependencyGraph.Dependency;
 import hudson.model.Item;
 import hudson.model.Result;
-import hudson.model.PermalinkProjectAction.Permalink;
 import hudson.model.Run;
+import hudson.model.TaskListener;
 import hudson.model.User;
 import hudson.security.ACL;
 import hudson.security.AuthorizationMatrixProperty;
@@ -56,6 +55,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.List;
 
 import javax.annotation.CheckForNull;
 
@@ -69,24 +69,27 @@ import org.acegisecurity.context.SecurityContextHolder;
 import org.dom4j.DocumentException;
 import org.dom4j.io.SAXReader;
 import org.junit.Assume;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
+import org.jvnet.hudson.test.BuildWatcher;
 import org.jvnet.hudson.test.ExtractResourceSCM;
+import org.jvnet.hudson.test.Issue;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.JenkinsRule.WebClient;
 import org.jvnet.hudson.test.TestBuilder;
-import org.jvnet.hudson.test.TestNotifier;
 import org.jvnet.hudson.test.MockBuilder;
 import org.jvnet.hudson.test.MockQueueItemAuthenticator;
+import org.jvnet.hudson.test.ToolInstallations;
 import org.xml.sax.SAXException;
 
-/**
- * Tests for hudson.tasks.BuildTrigger
- * @author Alan.Harder@sun.com
- */
 public class BuildTriggerTest {
 
-    public @Rule JenkinsRule j = new JenkinsRule();
+    @Rule
+    public JenkinsRule j = new JenkinsRule();
+
+    @ClassRule
+    public static BuildWatcher buildWatcher = new BuildWatcher();
 
     private FreeStyleProject createDownstreamProject() throws Exception {
         FreeStyleProject dp = j.createFreeStyleProject("downstream");
@@ -120,10 +123,11 @@ public class BuildTriggerTest {
         }
     }
 
-    private void assertDownstreamBuild(FreeStyleProject dp, Run<?,?> b) throws Exception {
+    private FreeStyleBuild assertDownstreamBuild(FreeStyleProject dp, Run<?,?> b) throws Exception {
         // Wait for downstream build
         for (int i = 0; dp.getLastBuild()==null && i < 20; i++) Thread.sleep(100);
         assertNotNull("downstream build didn't run.. upstream log: " + b.getLog(), dp.getLastBuild());
+        return dp.getLastBuild();
     }
 
     @Test
@@ -148,8 +152,8 @@ public class BuildTriggerTest {
             }
         }
         FreeStyleProject dp = createDownstreamProject();
-        j.configureDefaultMaven();
-        MavenModuleSet m = j.createMavenProject();
+        ToolInstallations.configureDefaultMaven();
+        MavenModuleSet m = j.jenkins.createProject(MavenModuleSet.class, "p");
         m.getPublishersList().add(new BuildTrigger("downstream", evenWhenUnstable));
         if (!evenWhenUnstable) {
             // Configure for UNSTABLE
@@ -207,7 +211,7 @@ public class BuildTriggerTest {
         /* The long way:
         WebClient wc = createWebClient();
         wc.login("alice");
-        HtmlPage page = wc.getPage(upstream, "configure");
+        HtmlPage page = wc.getHistoryPageFilter(upstream, "configure");
         HtmlForm config = page.getFormByName("config");
         config.getButtonByCaption("Add post-build action").click(); // lib/hudson/project/config-publishers2.jelly
         page.getAnchorByText("Build other projects").click();
@@ -218,6 +222,7 @@ public class BuildTriggerTest {
         assertEquals(Collections.singletonList(downstream), upstream.getDownstreamProjects());
         // Downstream projects whose existence we are not aware of will silently not be triggered:
         assertDoCheck(alice, Messages.BuildTrigger_NoSuchProject(downstreamName, "upstream"), upstream, downstreamName);
+        assertDoCheck(alice, null, null, downstreamName);
         FreeStyleBuild b = j.buildAndAssertSuccess(upstream);
         j.assertLogNotContains(downstreamName, b);
         j.waitUntilNoActivity();
@@ -228,6 +233,7 @@ public class BuildTriggerTest {
         AuthorizationMatrixProperty amp = new AuthorizationMatrixProperty(grantedPermissions);
         downstream.addProperty(amp);
         assertDoCheck(alice, Messages.BuildTrigger_you_have_no_permission_to_build_(downstreamName), upstream, downstreamName);
+        assertDoCheck(alice, null, null, downstreamName);
         b = j.buildAndAssertSuccess(upstream);
         j.assertLogContains(downstreamName, b);
         j.waitUntilNoActivity();
@@ -238,6 +244,7 @@ public class BuildTriggerTest {
         amp = new AuthorizationMatrixProperty(grantedPermissions);
         downstream.addProperty(amp);
         assertDoCheck(alice, null, upstream, downstreamName);
+        assertDoCheck(alice, null, null, downstreamName);
         b = j.buildAndAssertSuccess(upstream);
         j.assertLogContains(downstreamName, b);
         j.waitUntilNoActivity();
@@ -247,8 +254,9 @@ public class BuildTriggerTest {
         assertNotNull(cause);
         assertEquals(b, cause.getUpstreamRun());
         // Now if we have configured some QIA’s but they are not active on this job, we should run as anonymous. Which would normally have no permissions:
-        QueueItemAuthenticatorConfiguration.get().getAuthenticators().replace(new MockQueueItemAuthenticator(Collections.<String,Authentication>emptyMap()));
+        QueueItemAuthenticatorConfiguration.get().getAuthenticators().replace(new MockQueueItemAuthenticator(Collections.<String, Authentication>emptyMap()));
         assertDoCheck(alice, Messages.BuildTrigger_you_have_no_permission_to_build_(downstreamName), upstream, downstreamName);
+        assertDoCheck(alice, null, null, downstreamName);
         b = j.buildAndAssertSuccess(upstream);
         j.assertLogNotContains(downstreamName, b);
         j.assertLogContains(Messages.BuildTrigger_warning_this_build_has_no_associated_aut(), b);
@@ -261,6 +269,7 @@ public class BuildTriggerTest {
         amp = new AuthorizationMatrixProperty(grantedPermissions);
         downstream.addProperty(amp);
         assertDoCheck(alice, null, upstream, downstreamName);
+        assertDoCheck(alice, null, null, downstreamName);
         b = j.buildAndAssertSuccess(upstream);
         j.assertLogContains(downstreamName, b);
         j.waitUntilNoActivity();
@@ -276,6 +285,7 @@ public class BuildTriggerTest {
         downstream.addProperty(amp);
         QueueItemAuthenticatorConfiguration.get().getAuthenticators().clear();
         assertDoCheck(alice, Messages.BuildTrigger_NoSuchProject(downstreamName, "upstream"), upstream, downstreamName);
+        assertDoCheck(alice, null, null, downstreamName);
         b = j.buildAndAssertSuccess(upstream);
         j.assertLogContains(downstreamName, b);
         j.assertLogContains(Messages.BuildTrigger_warning_access_control_for_builds_in_glo(), b);
@@ -300,44 +310,118 @@ public class BuildTriggerTest {
         }
     }
 
-    @Test
+    @Test @Issue("JENKINS-20989")
     public void downstreamProjectShouldObserveCompletedParent() throws Exception {
-        final WebClient wc = j.createWebClient();
+        j.jenkins.setNumExecutors(2);
 
         final FreeStyleProject us = j.createFreeStyleProject();
         us.getPublishersList().add(new BuildTrigger("downstream", true));
-        us.getPublishersList().add(new TestNotifier() {
-            @Override
-            public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
-                Thread.sleep(5000); // Build does not complete just after the BuildTrigger
-                return true;
-            }
-        });
 
         FreeStyleProject ds = createDownstreamProject();
-        ds.getBuildersList().add(new TestBuilder() {
-            @Override
-            public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
-                // Parent should be completed by now
-                FreeStyleBuild upstream = us.getLastBuild();
-                assertNotNull(upstream);
-                assertEquals(1, upstream.getNumber());
-
-                try {
-                    wc.getPage(us, "lastBuild");
-                } catch (SAXException ex) {
-                    throw new AssertionError(ex);
-                }
-                return true;
-            }
-        });
+        ds.getBuildersList().add(new AssertTriggerBuildCompleted(us, j.createWebClient()));
 
         j.jenkins.rebuildDependencyGraph();
 
         j.buildAndAssertSuccess(us);
 
+        j.waitUntilNoActivity();
         final FreeStyleBuild dsb = ds.getBuildByNumber(1);
+        assertNotNull(dsb);
         j.waitForCompletion(dsb);
         j.assertBuildStatusSuccess(dsb);
+    }
+
+    @Test @Issue("JENKINS-20989")
+    public void allDownstreamProjectsShouldObserveCompletedParent() throws Exception {
+        j.jenkins.setNumExecutors(3);
+
+        final FreeStyleProject us = j.createFreeStyleProject();
+        us.getPublishersList().add(new SlowTrigger("downstream,downstream2"));
+
+        FreeStyleProject ds = createDownstreamProject();
+        ds.getBuildersList().add(new AssertTriggerBuildCompleted(us, j.createWebClient()));
+        FreeStyleProject ds2 = j.createFreeStyleProject("downstream2");
+        ds2.setQuietPeriod(0);
+        ds2.getBuildersList().add(new AssertTriggerBuildCompleted(us, j.createWebClient()));
+
+        j.jenkins.rebuildDependencyGraph();
+
+        FreeStyleBuild upstream = j.buildAndAssertSuccess(us);
+
+        FreeStyleBuild dsb = assertDownstreamBuild(ds, upstream);
+        j.waitForCompletion(dsb);
+        j.assertBuildStatusSuccess(dsb);
+
+        dsb = assertDownstreamBuild(ds2, upstream);
+        j.waitForCompletion(dsb);
+        j.assertBuildStatusSuccess(dsb);
+    }
+
+    // Trigger that goes through dependencies very slowly
+    private static final class SlowTrigger extends BuildTrigger {
+
+        private static final class Dep extends Dependency {
+            private static boolean block = false;
+            private Dep(AbstractProject upstream, AbstractProject downstream) {
+                super(upstream, downstream);
+            }
+
+            @Override
+            public boolean shouldTriggerBuild(AbstractBuild build, TaskListener listener, List<Action> actions) {
+                if (block) {
+                    try {
+                        Thread.sleep(5000);
+                    } catch (InterruptedException ex) {
+                        throw new AssertionError(ex);
+                    }
+                }
+                block = true;
+                final boolean should = super.shouldTriggerBuild(build, listener, actions);
+                return should;
+            }
+        }
+
+        public SlowTrigger(String childProjects) {
+            super(childProjects, true);
+        }
+
+        @Override @SuppressWarnings("rawtypes")
+        public void buildDependencyGraph(AbstractProject owner, DependencyGraph graph) {
+            for (AbstractProject ch: getChildProjects(owner)) {
+                graph.addDependency(new Dep(owner, ch));
+            }
+        }
+    }
+
+    // Fail downstream build if upstream is not completed yet
+    private static final class AssertTriggerBuildCompleted extends TestBuilder {
+        private final FreeStyleProject us;
+        private final WebClient wc;
+
+        private AssertTriggerBuildCompleted(FreeStyleProject us, WebClient wc) {
+            this.us = us;
+            this.wc = wc;
+        }
+
+        @Override
+        public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
+            FreeStyleBuild success = us.getLastSuccessfulBuild();
+            FreeStyleBuild last = us.getLastBuild();
+            try {
+                assertFalse("Upstream build is not completed after downstream started", last.isBuilding());
+                assertNotNull("Upstream build permalink not correctly updated", success);
+                assertEquals(1, success.getNumber());
+            } catch (AssertionError ex) {
+                System.err.println("Upstream build log: " + last.getLog());
+                throw ex;
+            }
+
+            try {
+                wc.getPage(us, "lastSuccessfulBuild");
+            } catch (SAXException ex) {
+                throw new AssertionError(ex);
+            }
+            return true;
+        }
     }
 }
