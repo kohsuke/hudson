@@ -708,11 +708,8 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
         File backup = getBackupFile();
         if (backup.exists()) {
             try {
-                JarFile backupPlugin = new JarFile(backup);
-                try {
+                try (JarFile backupPlugin = new JarFile(backup)) {
                     return backupPlugin.getManifest().getMainAttributes().getValue("Plugin-Version");
-                } finally {
-                    backupPlugin.close();
                 }
             } catch (IOException e) {
                 LOGGER.log(WARNING, "Failed to get backup version from " + backup, e);
@@ -746,6 +743,11 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
 
         public boolean isActivated() {
             return !plugins.isEmpty();
+        }
+
+        @Override
+        public String getDisplayName() {
+            return Messages.PluginWrapper_PluginWrapperAdministrativeMonitor_DisplayName();
         }
 
         public Collection<PluginWrapper> getPlugins() {
