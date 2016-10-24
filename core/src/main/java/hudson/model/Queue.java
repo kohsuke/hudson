@@ -121,6 +121,7 @@ import org.kohsuke.accmod.restrictions.DoNotUse;
 
 import com.thoughtworks.xstream.XStream;
 import com.thoughtworks.xstream.converters.basic.AbstractSingleValueConverter;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jenkins.util.SystemProperties;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nonnegative;
@@ -350,16 +351,13 @@ public class Queue extends ResourceController implements Saveable {
             // first try the old format
             File queueFile = getQueueFile();
             if (queueFile.exists()) {
-                BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(queueFile)));
-                try {
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(queueFile)))) {
                     String line;
                     while ((line = in.readLine()) != null) {
                         AbstractProject j = Jenkins.getInstance().getItemByFullName(line, AbstractProject.class);
                         if (j != null)
                             j.scheduleBuild();
                     }
-                } finally {
-                    in.close();
                 }
                 // discard the queue file now that we are done
                 queueFile.delete();
@@ -1411,7 +1409,7 @@ public class Queue extends ResourceController implements Saveable {
                 }
                 // pending -> buildable
                 for (BuildableItem p: lostPendings) {
-                    LOGGER.log(Level.INFO,
+                    LOGGER.log(Level.FINE,
                             "BuildableItem {0}: pending -> buildable as the assigned executor disappeared",
                             p.task.getFullDisplayName());
                     p.isPending = false;
@@ -2769,11 +2767,13 @@ public class Queue extends ResourceController implements Saveable {
             return x;
         }
 
+        @SuppressFBWarnings(value = "IA_AMBIGUOUS_INVOCATION_OF_INHERITED_OR_OUTER_METHOD",
+                justification = "It will invoke the inherited clear() method according to Java semantics. "
+                              + "FindBugs recommends suppresing warnings in such case")
         public void cancelAll() {
             for (T t : new ArrayList<T>(this))
                 t.cancel(Queue.this);
-
-            clear();    // just to be sure
+            clear();
         }
     }
 

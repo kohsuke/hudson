@@ -698,7 +698,7 @@ public abstract class Job<JobT extends Job<JobT, RunT>, RunT extends Run<JobT, R
     @Exported(name="allBuilds",visibility=-2)
     @WithBridgeMethods(List.class)
     public RunList<RunT> getBuilds() {
-        return RunList.fromRuns(_getRuns().values());
+        return RunList.<RunT>fromRuns(_getRuns().values());
     }
 
     /**
@@ -730,7 +730,7 @@ public abstract class Job<JobT extends Job<JobT, RunT>, RunT extends Run<JobT, R
      * Gets all the builds in a map.
      */
     public SortedMap<Integer, RunT> getBuildsAsMap() {
-        return Collections.unmodifiableSortedMap(_getRuns());
+        return Collections.<Integer, RunT>unmodifiableSortedMap(_getRuns());
     }
 
     /**
@@ -816,7 +816,7 @@ public abstract class Job<JobT extends Job<JobT, RunT>, RunT extends Run<JobT, R
             StaplerResponse rsp) {
         try {
             // try to interpret the token as build number
-            return getBuildByNumber(Integer.valueOf(token));
+            return getBuildByNumber(Integer.parseInt(token));
         } catch (NumberFormatException e) {
             // try to map that to widgets
             for (Widget w : getWidgets()) {

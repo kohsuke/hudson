@@ -147,7 +147,7 @@ public class Maven extends Builder {
      *
      * Defaults to false unless user requests otherwise. Old configurations are set to true to mimic the legacy behaviour.
      *
-     * @since TODO
+     * @since 2.12
      */
     private @Nonnull Boolean injectBuildVariables;
 
@@ -472,6 +472,11 @@ public class Maven extends Builder {
 
         @Override
         public Builder newInstance(StaplerRequest req, JSONObject formData) throws FormException {
+            if (req == null) {
+                // This state is prohibited according to the Javadoc of the super method.
+                throw new FormException("Maven Build Step new instance method is called for null Stapler request. "
+                        + "Such call is prohibited.", "req");
+            }
             return req.bindJSON(Maven.class,formData);
         }
     }

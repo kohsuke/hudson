@@ -50,7 +50,7 @@ import java.util.TreeSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static com.google.common.collect.Lists.newArrayList;
+import com.google.common.collect.Lists;
 import static com.google.common.collect.Sets.newHashSet;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nonnull;
@@ -107,7 +107,7 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
      *
      * @param parameters the parameters
      * @param additionalSafeParameters additional safe parameters
-     * @since TODO
+     * @since 1.651.2, 2.3
      */
     public ParametersAction(List<ParameterValue> parameters, Collection<String> additionalSafeParameters) {
         this(parameters);
@@ -169,7 +169,7 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
 
     @Exported(visibility=2)
     public List<ParameterValue> getParameters() {
-        return Collections.unmodifiableList(filter(parameters));
+        return Collections.<ParameterValue>unmodifiableList(filter(parameters));
     }
 
     public ParameterValue getParameter(String name) {
@@ -231,7 +231,7 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
             parametersAction.safeParameters = this.safeParameters;
             return parametersAction;
         }
-        List<ParameterValue> combinedParameters = newArrayList(overrides);
+        List<ParameterValue> combinedParameters = Lists.<ParameterValue>newArrayList(overrides);
         Set<String> names = newHashSet();
 
         for(ParameterValue v : overrides) {
@@ -334,7 +334,7 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
      * caller could inject any parameter (using any key) here. <strong>Treat it as untrusted data</strong>.
      *
      * @return all parameters defined here.
-     * @since TODO
+     * @since 1.651.2, 2.3
      */
     public List<ParameterValue> getAllParameters() {
         return Collections.unmodifiableList(parameters);
