@@ -24,6 +24,7 @@
 package hudson;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.security.ACLContext;
 import jenkins.util.SystemProperties;
 import hudson.PluginWrapper.Dependency;
@@ -66,6 +67,7 @@ import net.sf.json.JSONObject;
 
 import org.acegisecurity.Authentication;
 import org.apache.commons.fileupload.FileItem;
+import org.apache.commons.fileupload.FileUploadException;
 import org.apache.commons.fileupload.disk.DiskFileItemFactory;
 import org.apache.commons.fileupload.servlet.ServletFileUpload;
 import org.apache.commons.io.FileUtils;
@@ -140,6 +142,10 @@ import org.xml.sax.helpers.DefaultHandler;
 import static hudson.init.InitMilestone.*;
 import hudson.model.DownloadService;
 import hudson.util.FormValidation;
+import java.io.ByteArrayInputStream;
+import java.net.JarURLConnection;
+import java.net.URLConnection;
+import java.util.jar.JarEntry;
 
 import static java.util.logging.Level.FINE;
 import static java.util.logging.Level.INFO;
@@ -571,6 +577,8 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         return loadPluginsFromWar(fromPath, null);
     }
 
+    //TODO: Consider refactoring in order to avoid DMI_COLLECTION_OF_URLS
+    @SuppressFBWarnings(value = "DMI_COLLECTION_OF_URLS", justification = "Plugin loading happens only once on Jenkins startup")
     protected @Nonnull Set<String> loadPluginsFromWar(@Nonnull String fromPath, @CheckForNull FilenameFilter filter) {
         Set<String> names = new HashSet();
 
@@ -627,6 +635,8 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         return names;
     }
 
+    //TODO: Consider refactoring in order to avoid DMI_COLLECTION_OF_URLS
+    @SuppressFBWarnings(value = "DMI_COLLECTION_OF_URLS", justification = "Plugin loading happens only once on Jenkins startup")
     protected static void addDependencies(URL hpiResUrl, String fromPath, Set<URL> dependencySet) throws URISyntaxException, MalformedURLException {
         if (dependencySet.contains(hpiResUrl)) {
             return;
@@ -943,7 +953,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
     protected void copyBundledPlugin(URL src, String fileName) throws IOException {
         fileName = fileName.replace(".hpi",".jpi"); // normalize fileNames to have the correct suffix
         String legacyName = fileName.replace(".jpi",".hpi");
-        long lastModified = src.openConnection().getLastModified();
+        long lastModified = getModificationDate(src);
         File file = new File(rootDir, fileName);
 
         // normalization first, if the old file exists.
@@ -954,7 +964,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         //  - bundled version and current version differs (by timestamp).
         if (!file.exists() || file.lastModified() != lastModified) {
             FileUtils.copyURLToFile(src, file);
-            file.setLastModified(src.openConnection().getLastModified());
+            file.setLastModified(getModificationDate(src));
             // lastModified is set for two reasons:
             // - to avoid unpacking as much as possible, but still do it on both upgrade and downgrade
             // - to make sure the value is not changed after each restart, so we can avoid
@@ -965,19 +975,19 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         // See https://groups.google.com/d/msg/jenkinsci-dev/kRobm-cxFw8/6V66uhibAwAJ
     }
 
-    private static @CheckForNull Manifest parsePluginManifest(URL bundledJpi) {
+    /*package*/ static @CheckForNull Manifest parsePluginManifest(URL bundledJpi) {
         try {
             URLClassLoader cl = new URLClassLoader(new URL[]{bundledJpi});
             InputStream in=null;
             try {
                 URL res = cl.findResource(PluginWrapper.MANIFEST_FILENAME);
                 if (res!=null) {
-                    in = res.openStream();
+                    in = getBundledJpiManifestStream(res);
                     Manifest manifest = new Manifest(in);
                     return manifest;
                 }
             } finally {
-                IOUtils.closeQuietly(in);
+                Util.closeAndLogFailures(in, LOGGER, PluginWrapper.MANIFEST_FILENAME, bundledJpi.toString());
                 if (cl instanceof Closeable)
                     ((Closeable)cl).close();
             }
@@ -985,6 +995,81 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
             LOGGER.log(WARNING, "Failed to parse manifest of "+bundledJpi, e);
         }
         return null;
+    }
+    
+    /**
+     * Retrieves input stream for the Manifest url.
+     * The method intelligently handles the case of {@link JarURLConnection} pointing to files within JAR.
+     * @param url Url of the manifest file
+     * @return Input stream, which allows to retrieve manifest. This stream must be closed outside
+     * @throws IOException Operation error
+     */
+    @Nonnull
+    /*package*/ static InputStream getBundledJpiManifestStream(@Nonnull URL url) throws IOException {
+        URLConnection uc = url.openConnection();
+        InputStream in = null;
+        // Magic, which allows to avoid using stream generated for JarURLConnection.
+        // It prevents getting into JENKINS-37332 due to the file desciptor leak 
+        if (uc instanceof JarURLConnection) {
+            final JarURLConnection jarURLConnection = (JarURLConnection) uc;
+            final String entryName = jarURLConnection.getEntryName();
+            
+            try(final JarFile jarFile = jarURLConnection.getJarFile()) {
+                final JarEntry entry = (entryName != null && jarFile != null) ? jarFile.getJarEntry(entryName) : null;
+                if (entry != null && jarFile != null) {
+                    try(InputStream i = jarFile.getInputStream(entry)) {
+                        byte[] manifestBytes = IOUtils.toByteArray(i);
+                        in = new ByteArrayInputStream(manifestBytes);
+                    }
+                } else {
+                    LOGGER.log(Level.WARNING, "Failed to locate the JAR file for {0}"
+                            + "The default URLConnection stream access will be used, file descriptor may be leaked.",
+                               url);
+                }
+            }
+        } 
+
+        // If input stream is undefined, use the default implementation
+        if (in == null) {
+            in = url.openStream();
+        }
+        
+        return in;
+    }
+    
+    /**
+     * Retrieves modification date of the specified file.
+     * The method intelligently handles the case of {@link JarURLConnection} pointing to files within JAR.
+     * @param url Url of the file
+     * @return Modification date
+     * @throws IOException Operation error
+     */
+    @Nonnull
+    /*package*/ static long getModificationDate(@Nonnull URL url) throws IOException {
+        URLConnection uc = url.openConnection();
+        
+        // It prevents file desciptor leak if the URL references a file within JAR
+        // See JENKINS-37332  for more info
+        // The code idea is taken from https://github.com/jknack/handlebars.java/pull/394
+        if (uc instanceof JarURLConnection) {
+            final JarURLConnection connection = (JarURLConnection) uc;
+            final URL jarURL = connection.getJarFileURL();
+            if (jarURL.getProtocol().equals("file")) {
+                uc = null;
+                String file = jarURL.getFile();
+                return new File(file).lastModified();
+            } else {
+                // We access the data without file protocol
+                if (connection.getEntryName() != null) {
+                    LOGGER.log(WARNING, "Accessing modification date of {0} file, which is an entry in JAR file. "
+                        + "The access protocol is not file:, falling back to the default logic (risk of file descriptor leak).",
+                            url);
+                }
+            }
+        }
+        
+        // Fallbak to the default implementation
+        return uc.getLastModified();
     }
 
     /**
@@ -1060,8 +1145,11 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
     /**
      * Get the plugin instance with the given short name.
      * @param shortName the short name of the plugin
-     * @return The plugin singleton or <code>null</code> if a plugin with the given short name does not exist.
+     * @return The plugin singleton or {@code null} if a plugin with the given short name does not exist.
+     *         The fact the plugin is loaded does not mean it is enabled and fully initialized for the current Jenkins session.
+     *         Use {@link PluginWrapper#isActive()} to check it.
      */
+    @CheckForNull
     public PluginWrapper getPlugin(String shortName) {
         for (PluginWrapper p : getPlugins()) {
             if(p.getShortName().equals(shortName))
@@ -1074,8 +1162,11 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
      * Get the plugin instance that implements a specific class, use to find your plugin singleton.
      * Note: beware the classloader fun.
      * @param pluginClazz The class that your plugin implements.
-     * @return The plugin singleton or <code>null</code> if for some reason the plugin is not loaded.
+     * @return The plugin singleton or {@code null} if for some reason the plugin is not loaded.
+     *         The fact the plugin is loaded does not mean it is enabled and fully initialized for the current Jenkins session.
+     *         Use {@link Plugin#getWrapper()} and then {@link PluginWrapper#isActive()} to check it.
      */
+    @CheckForNull
     public PluginWrapper getPlugin(Class<? extends Plugin> pluginClazz) {
         for (PluginWrapper p : getPlugins()) {
             if(pluginClazz.isInstance(p.getPlugin()))
@@ -1440,9 +1531,8 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
         }
         sites.add(new UpdateSite(UpdateCenter.ID_DEFAULT, site));
 
-        return HttpResponses.redirectToContextRoot();
+        return new HttpRedirect("advanced");
     }
-
 
     @RequirePOST
     public HttpResponse doProxyConfigure(StaplerRequest req) throws IOException, ServletException {
@@ -1471,7 +1561,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
             ServletFileUpload upload = new ServletFileUpload(new DiskFileItemFactory());
 
             // Parse the request
-            FileItem fileItem = (FileItem) upload.parseRequest(req).get(0);
+            FileItem fileItem = upload.parseRequest(req).get(0);
             String fileName = Util.getFileName(fileItem.getName());
             if("".equals(fileName)){
                 return new HttpRedirect("advanced");
@@ -1484,7 +1574,12 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
             // first copy into a temporary file name
             File t = File.createTempFile("uploaded", ".jpi");
             t.deleteOnExit();
-            fileItem.write(t);
+            try {
+                fileItem.write(t);
+            } catch (Exception e) {
+                // Exception thrown is too generic so at least limit the scope where it can occur
+                throw new ServletException(e);
+            }
             fileItem.delete();
 
             final String baseName = identifyPluginShortName(t);
@@ -1520,9 +1615,7 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
                     element("dependencies", dependencies);
             new UpdateSite(UpdateCenter.ID_UPLOAD, null).new Plugin(UpdateCenter.ID_UPLOAD, cfg).deploy(true);
             return new HttpRedirect("../updateCenter");
-        } catch (IOException e) {
-            throw e;
-        } catch (Exception e) {// grrr. fileItem.write throws this
+        } catch (FileUploadException e) {
             throw new ServletException(e);
         }
     }
@@ -1866,6 +1959,11 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
     @Extension @Symbol("pluginCycleDependencies")
     public static final class PluginCycleDependenciesMonitor extends AdministrativeMonitor {
 
+        @Override
+        public String getDisplayName() {
+            return Messages.PluginManager_PluginCycleDependenciesMonitor_DisplayName();
+        }
+
         private transient volatile boolean isActive = false;
 
         private transient volatile List<PluginWrapper> pluginsWithCycle;
@@ -1923,6 +2021,11 @@ public abstract class PluginManager extends AbstractModelObject implements OnMas
 
         public boolean isActivated() {
             return !pluginsToBeUpdated.isEmpty();
+        }
+
+        @Override
+        public String getDisplayName() {
+            return Messages.PluginManager_PluginUpdateMonitor_DisplayName();
         }
 
         /**

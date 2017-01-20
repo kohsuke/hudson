@@ -76,6 +76,7 @@ import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -97,17 +98,28 @@ import static java.util.logging.Level.WARNING;
 public class SCMTrigger extends Trigger<Item> {
     
     private boolean ignorePostCommitHooks;
-    
-    public SCMTrigger(String scmpoll_spec) throws ANTLRException {
-        this(scmpoll_spec, false);
-    }
-    
+
     @DataBoundConstructor
+    public SCMTrigger(String scmpoll_spec) throws ANTLRException {
+        super(scmpoll_spec);
+    }
+
+    /**
+     * Backwards-compatibility constructor.
+     *
+     * @param scmpoll_spec
+     *     The spec to poll with.
+     * @param ignorePostCommitHooks
+     *     Whether to ignore post commit hooks.
+     *
+     * @deprecated since 2.21
+     */
+    @Deprecated
     public SCMTrigger(String scmpoll_spec, boolean ignorePostCommitHooks) throws ANTLRException {
         super(scmpoll_spec);
         this.ignorePostCommitHooks = ignorePostCommitHooks;
     }
-    
+
     /**
      * This trigger wants to ignore post-commit hooks.
      * <p>
@@ -117,6 +129,23 @@ public class SCMTrigger extends Trigger<Item> {
      */
     public boolean isIgnorePostCommitHooks() {
         return this.ignorePostCommitHooks;
+    }
+
+    /**
+     * Data-bound setter for ignoring post commit hooks.
+     *
+     * @param ignorePostCommitHooks
+     *     True if we should ignore post commit hooks, false otherwise.
+     *
+     * @since 2.22
+     */
+    @DataBoundSetter
+    public void setIgnorePostCommitHooks(boolean ignorePostCommitHooks) {
+        this.ignorePostCommitHooks = ignorePostCommitHooks;
+    }
+
+    public String getScmpoll_spec() {
+        return super.getSpec();
     }
 
     @Override
@@ -178,7 +207,7 @@ public class SCMTrigger extends Trigger<Item> {
         return new File(job.getRootDir(),"scm-polling.log");
     }
 
-    @Extension @Symbol("scm")
+    @Extension @Symbol("pollSCM")
     public static class DescriptorImpl extends TriggerDescriptor {
 
         private static ThreadFactory threadFactory() {
@@ -281,12 +310,24 @@ public class SCMTrigger extends Trigger<Item> {
 
         @Restricted(NoExternalUse.class)
         public boolean isPollingThreadCountOptionVisible() {
+            if (getPollingThreadCount() != 0) {
+                // this is a user who already configured the option
+                return true;
+            }
             // unless you have a fair number of projects, this option is likely pointless.
             // so let's hide this option for new users to avoid confusing them
             // unless it was already changed
-            // TODO switch to check for SCMTriggerItem
-            return Jenkins.getInstance().getAllItems(AbstractProject.class).size() > 10
-                    || getPollingThreadCount() != 0;
+            int count = 0;
+            // we are faster walking some items with a lazy iterator than building a list of all items just to query
+            // the size. This also lets us check against SCMTriggerItem rather than AbstractProject
+            for (Item item: Jenkins.getInstance().allItems(Item.class)) {
+                if (item instanceof SCMTriggerItem) {
+                    if (++count > 10) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /**
@@ -320,6 +361,12 @@ public class SCMTrigger extends Trigger<Item> {
 
     @Extension
     public static final class AdministrativeMonitorImpl extends AdministrativeMonitor {
+
+        @Override
+        public String getDisplayName() {
+            return Messages.SCMTrigger_AdministrativeMonitorImpl_DisplayName();
+        }
+
         private boolean on;
 
         public boolean isActivated() {
