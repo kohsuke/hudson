@@ -28,7 +28,7 @@ THE SOFTWARE.
   <parent>
     <groupId>org.jenkins-ci.main</groupId>
     <artifactId>pom</artifactId>
-    <version>2.17-SNAPSHOT</version>
+    <version>2.26-SNAPSHOT</version>
   </parent>
 
   <artifactId>jenkins-war</artifactId>
@@ -47,9 +47,14 @@ THE SOFTWARE.
 
   <dependencies>
     <dependency>
+      <groupId>org.jenkins-ci.main</groupId>
+      <artifactId>jenkins-core-bootstrap</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.jenkins-ci</groupId>
       <artifactId>executable-war</artifactId>
-      <version>1.33</version>
+      <version>1.34</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
@@ -134,7 +139,7 @@ THE SOFTWARE.
     <dependency>
       <groupId>org.jenkins-ci.modules</groupId>
       <artifactId>sshd</artifactId>
-      <version>1.6</version>
+      <version>1.7</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.ui</groupId>
@@ -206,6 +211,10 @@ THE SOFTWARE.
               <Jenkins-Version>${project.version}</Jenkins-Version>
             </manifestEntries>
           </archive>
+
+          <!-- exclude most of lib/*.jar except for what's needed in bootstrap -->
+          <packagingExcludes>%regex[WEB-INF/lib/(?!jenkins-core-bootstrap.*.jar)(?!ant.*.jar)(?!version-number.*.jar).*.jar]</packagingExcludes>
+
           <!--outputFileNameMapping>@{artifactId}@.@{extension}@</outputFileNameMapping-->
         </configuration>
       </plugin>
@@ -417,6 +426,22 @@ THE SOFTWARE.
               <overWriteIfNewer>true</overWriteIfNewer>
               <overWriteReleases>false</overWriteReleases>
               <overWriteSnapshots>true</overWriteSnapshots>
+            </configuration>
+          </execution>
+          <execution>
+            <!--
+              put dependency jars into WEB-INF/jars (instead of normal WEB-INF/lib.
+              See maven-war-plugin config that excludes WEB-INF/lib/*.jar
+            -->
+            <id>WEB-INF/jar</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <includeScope>runtime</includeScope>
+              <outputDirectory>${project.build.directory}/${project.build.finalName}/WEB-INF/jars</outputDirectory>
+              <excludeArtifactIds>jenkins-core-bootstrap,ant,ant-launcher,version-number</excludeArtifactIds>
             </configuration>
           </execution>
         </executions>
