@@ -2,6 +2,7 @@
  * The MIT License
  * 
  * Copyright (c) 2004-2009, Sun Microsystems, Inc., Kohsuke Kawaguchi, Brian Westrich, Jean-Baptiste Quenot, id:cactusman
+ *               2015 Kanstantsin Shautsou
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +25,7 @@
 package hudson.triggers;
 
 import antlr.ANTLRException;
+import com.google.common.base.Preconditions;
 import hudson.Extension;
 import hudson.Util;
 import hudson.console.AnnotatedLargeText;
@@ -44,13 +46,6 @@ import hudson.util.NamingThreadFactory;
 import hudson.util.SequentialExecutionQueue;
 import hudson.util.StreamTaskListener;
 import hudson.util.TimeUnit2;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.jelly.XMLOutput;
-import org.kohsuke.accmod.Restricted;
-import org.kohsuke.accmod.restrictions.DoNotUse;
-import org.kohsuke.stapler.StaplerRequest;
-import org.kohsuke.stapler.DataBoundConstructor;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -69,14 +64,23 @@ import java.util.concurrent.ThreadFactory;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.Jenkins;
+import jenkins.model.RunAction2;
+import jenkins.scm.SCMDecisionHandler;
 import jenkins.triggers.SCMTriggerItem;
+import jenkins.util.SystemProperties;
 import net.sf.json.JSONObject;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.jelly.XMLOutput;
+import org.jenkinsci.Symbol;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
+import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 
-import static java.util.logging.Level.*;
-import jenkins.model.RunAction2;
+import static java.util.logging.Level.WARNING;
 
 
 /**
@@ -117,6 +121,10 @@ public class SCMTrigger extends Trigger<Item> {
 
     @Override
     public void run() {
+        if (job == null) {
+            return;
+        }
+
         run(null);
     }
 
@@ -128,8 +136,7 @@ public class SCMTrigger extends Trigger<Item> {
      * @since 1.375
      */
     public void run(Action[] additionalActions) {
-        if (Jenkins.getInstance().isQuietingDown()) {
-            LOGGER.log(INFO, "Skipping polling for {0} since Jenkins is in quiet mode", job.getFullName());
+        if (job == null) {
             return;
         }
 
@@ -157,6 +164,10 @@ public class SCMTrigger extends Trigger<Item> {
 
     @Override
     public Collection<? extends Action> getProjectActions() {
+        if (job == null) {
+            return Collections.emptyList();
+        }
+
         return Collections.singleton(new SCMAction());
     }
 
@@ -167,7 +178,7 @@ public class SCMTrigger extends Trigger<Item> {
         return new File(job.getRootDir(),"scm-polling.log");
     }
 
-    @Extension
+    @Extension @Symbol("scm")
     public static class DescriptorImpl extends TriggerDescriptor {
 
         private static ThreadFactory threadFactory() {
@@ -462,10 +473,12 @@ public class SCMTrigger extends Trigger<Item> {
         private Action[] additionalActions;
 
         public Runner() {
-            additionalActions = new Action[0];
+            this(null);
         }
         
         public Runner(Action[] actions) {
+            Preconditions.checkNotNull(job, "Runner can't be instantiated when job is null");
+
             if (actions == null) {
                 additionalActions = new Action[0];
             } else {
@@ -519,11 +532,7 @@ public class SCMTrigger extends Trigger<Item> {
                     else
                         logger.println("No changes");
                     return result;
-                } catch (Error e) {
-                    e.printStackTrace(listener.error("Failed to record SCM polling for "+job));
-                    LOGGER.log(Level.SEVERE,"Failed to record SCM polling for "+job,e);
-                    throw e;
-                } catch (RuntimeException e) {
+                } catch (Error | RuntimeException e) {
                     e.printStackTrace(listener.error("Failed to record SCM polling for "+job));
                     LOGGER.log(Level.SEVERE,"Failed to record SCM polling for "+job,e);
                     throw e;
@@ -537,6 +546,27 @@ public class SCMTrigger extends Trigger<Item> {
         }
 
         public void run() {
+            if (job == null) {
+                return;
+            }
+            // we can pre-emtively check the SCMDecisionHandler instances here
+            // note that job().poll(listener) should also check this
+            SCMDecisionHandler veto = SCMDecisionHandler.firstShouldPollVeto(job);
+            if (veto != null) {
+                try (StreamTaskListener listener = new StreamTaskListener(getLogFile())) {
+                    listener.getLogger().println(
+                            "Skipping polling on " + DateFormat.getDateTimeInstance().format(new Date())
+                                    + " due to veto from " + veto);
+                } catch (IOException e) {
+                    LOGGER.log(Level.SEVERE, "Failed to record SCM polling for " + job, e);
+                }
+
+                LOGGER.log(Level.FINE, "Skipping polling for {0} due to veto from {1}",
+                        new Object[]{job.getFullDisplayName(), veto}
+                );
+                return;
+            }
+
             String threadName = Thread.currentThread().getName();
             Thread.currentThread().setName("SCM polling for "+job);
             try {
@@ -603,8 +633,9 @@ public class SCMTrigger extends Trigger<Item> {
 
         /**
          * @deprecated
-         *      Use {@link #SCMTrigger.SCMTriggerCause(String)}.
+         *      Use {@link SCMTrigger.SCMTriggerCause#SCMTriggerCause(String)}.
          */
+        @Deprecated
         public SCMTriggerCause() {
             this("");
         }
@@ -651,5 +682,5 @@ public class SCMTrigger extends Trigger<Item> {
     /**
      * How long is too long for a polling activity to be in the queue?
      */
-    public static long STARVATION_THRESHOLD =Long.getLong(SCMTrigger.class.getName()+".starvationThreshold", TimeUnit2.HOURS.toMillis(1));
+    public static long STARVATION_THRESHOLD = SystemProperties.getLong(SCMTrigger.class.getName()+".starvationThreshold", TimeUnit2.HOURS.toMillis(1));
 }

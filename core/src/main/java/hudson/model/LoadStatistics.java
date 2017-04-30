@@ -24,7 +24,7 @@
 package hudson.model;
 
 import hudson.Extension;
-import hudson.Util;
+import jenkins.util.SystemProperties;
 import hudson.model.MultiStageTimeSeries.TimeScale;
 import hudson.model.MultiStageTimeSeries.TrendChart;
 import hudson.model.queue.SubTask;
@@ -32,6 +32,7 @@ import hudson.model.queue.Tasks;
 import hudson.util.ColorPalette;
 import hudson.util.NoOverlapCategoryAxis;
 import jenkins.model.Jenkins;
+import org.jenkinsci.Symbol;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.JFreeChart;
 import org.jfree.chart.axis.CategoryAxis;
@@ -52,6 +53,7 @@ import java.io.Serializable;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.List;
+import javax.annotation.CheckForNull;
 
 /**
  * Utilization statistics for a node or a set of nodes.
@@ -168,7 +170,7 @@ public abstract class LoadStatistics {
             }
             if (!hasMatches) {
                 try {
-                    final Method getNodes = clazz.getDeclaredMethod("matches", SubTask.class);
+                    final Method getNodes = clazz.getDeclaredMethod("matches", Queue.Item.class, SubTask.class);
                     hasMatches = !Modifier.isAbstract(getNodes.getModifiers());
                 } catch (NoSuchMethodException e) {
                     // ignore
@@ -310,11 +312,12 @@ public abstract class LoadStatistics {
 
     /**
      * Returns {@code true} is the specified {@link SubTask} from the {@link Queue} should be counted.
-     * @param item the {@link SubTask}
+     * @param item the {@link Queue.Item} that the {@link SubTask belongs to}
+     * @param subTask the {@link SubTask}
      * @return {@code true} IFF the specified {@link SubTask} from the {@link Queue} should be counted.
      * @since 1.607
      */
-    protected abstract boolean matches(SubTask item);
+    protected abstract boolean matches(Queue.Item item, SubTask subTask);
 
     /**
      * Computes a self-consistent snapshot of the load statistics.
@@ -355,8 +358,9 @@ public abstract class LoadStatistics {
         int q = 0;
         if (queue != null) {
             for (Queue.BuildableItem item : queue) {
+                
                 for (SubTask st : item.task.getSubTasks()) {
-                    if (matches(st))
+                    if (matches(item, st))
                         q++;
                 }
             }
@@ -366,17 +370,19 @@ public abstract class LoadStatistics {
 
     /**
      * With 0.90 decay ratio for every 10sec, half reduction is about 1 min.
+     * 
+     * Put differently, the half reduction time is {@code CLOCK*log(0.5)/log(DECAY)}
      */
-    public static final float DECAY = Float.parseFloat(System.getProperty(LoadStatistics.class.getName()+".decay","0.9"));
+    public static final float DECAY = Float.parseFloat(SystemProperties.getString(LoadStatistics.class.getName()+".decay","0.9"));
     /**
      * Load statistics clock cycle in milliseconds. Specify a small value for quickly debugging this feature and node provisioning through cloud.
      */
-    public static int CLOCK = Integer.getInteger(LoadStatistics.class.getName() + ".clock", 10 * 1000);
+    public static int CLOCK = SystemProperties.getInteger(LoadStatistics.class.getName() + ".clock", 10 * 1000);
 
     /**
      * Periodically update the load statistics average.
      */
-    @Extension
+    @Extension @Symbol("loadStatistics")
     public static class LoadStatisticsUpdater extends PeriodicWork {
         public long getRecurrencePeriod() {
             return CLOCK;
@@ -386,7 +392,7 @@ public abstract class LoadStatistics {
             Jenkins j = Jenkins.getInstance();
             List<Queue.BuildableItem> bis = j.getQueue().getBuildableItems();
 
-            // update statistics on slaves
+            // update statistics on agents
             for( Label l : j.getLabels() ) {
                 l.loadStatistics.updateCounts(l.loadStatistics.computeSnapshot(bis));
             }
@@ -417,7 +423,7 @@ public abstract class LoadStatistics {
         private static final long serialVersionUID = 1L;
 
         /**
-         * The total number of executors that Jenkins currently knows, this includes all off-line slaves.
+         * The total number of executors that Jenkins currently knows, this includes all off-line agents.
          */
         private final int definedExecutors;
         /**
@@ -463,7 +469,7 @@ public abstract class LoadStatistics {
         }
 
         /**
-          * The total number of executors that Jenkins currently knows, this includes all off-line slaves.
+          * The total number of executors that Jenkins currently knows, this includes all off-line agents.
           */
         @Exported
         public int getDefinedExecutors() {
@@ -611,13 +617,17 @@ public abstract class LoadStatistics {
                 return this;
             }
 
-            public Builder with(Node node) {
-                if (node != null)
-                return with(node.toComputer());
+            public Builder with(@CheckForNull Node node) {
+                if (node != null) {
+                    return with(node.toComputer());
+                }
                 return this;
             }
 
-            public Builder with(Computer computer) {
+            public Builder with(@CheckForNull Computer computer) {
+                if (computer == null) {
+                    return this;
+                }
                 if (computer.isOnline()) {
                     final List<Executor> executors = computer.getExecutors();
                     final boolean acceptingTasks = computer.isAcceptingTasks();

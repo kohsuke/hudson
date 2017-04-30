@@ -32,7 +32,7 @@ import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.export.Exported;
 
 /**
- * {@link LoadStatistics} for the entire system (the master and all the slaves combined),
+ * {@link LoadStatistics} for the entire system (the master and all the agents combined),
  * and all the jobs that are running on it.
  *
  * @author Kohsuke Kawaguchi
@@ -48,6 +48,7 @@ public class OverallLoadStatistics extends LoadStatistics {
      */
     @Exported
     @Restricted(NoExternalUse.class)
+    @Deprecated
     public final MultiStageTimeSeries totalQueueLength = queueLength;
 
     public OverallLoadStatistics() {
@@ -75,7 +76,7 @@ public class OverallLoadStatistics extends LoadStatistics {
     }
 
     @Override
-    protected boolean matches(SubTask item) {
+    protected boolean matches(Queue.Item item, SubTask subTask) {
         return true;
     }
 

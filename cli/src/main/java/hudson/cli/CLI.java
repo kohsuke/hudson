@@ -97,6 +97,7 @@ public class CLI {
      * @deprecated
      *      Use {@link CLIConnectionFactory} to create {@link CLI}
      */
+    @Deprecated
     public CLI(URL jenkins, ExecutorService exec) throws IOException, InterruptedException {
         this(jenkins,exec,null);
     }
@@ -105,6 +106,7 @@ public class CLI {
      * @deprecated 
      *      Use {@link CLIConnectionFactory} to create {@link CLI}
      */
+    @Deprecated
     public CLI(URL jenkins, ExecutorService exec, String httpsProxyTunnel) throws IOException, InterruptedException {
         this(new CLIConnectionFactory().url(jenkins).executorService(exec).httpsProxyTunnel(httpsProxyTunnel));
     }
@@ -129,13 +131,7 @@ public class CLI {
             try {
                 _channel = connectViaHttp(url);
             } catch (IOException e2) {
-                try { // Java 7: e.addSuppressed(e2);
-                    Throwable.class.getMethod("addSuppressed", Throwable.class).invoke(e, e2);
-                } catch (NoSuchMethodException _ignore) {
-                    // Java 6
-                } catch (Exception _huh) {
-                    LOGGER.log(Level.SEVERE, null, _huh);
-                }
+                e.addSuppressed(e2);
                 throw e;
             }
         }
@@ -384,7 +380,13 @@ public class CLI {
 //        h.setLevel(ALL);
 //        l.addHandler(h);
 //
-        System.exit(_main(_args));
+        try {
+            System.exit(_main(_args));
+        } catch (Throwable t) {
+            // if the CLI main thread die, make sure to kill the JVM.
+            t.printStackTrace();
+            System.exit(-1);
+        }
     }
 
     public static int _main(String[] _args) throws Exception {

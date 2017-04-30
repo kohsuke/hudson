@@ -74,6 +74,7 @@ public class HudsonFilter implements Filter {
      * This proxy always delegate to {@code Hudson.getInstance().getSecurityRealm().getSecurityComponents().manager},
      * so use that instead.
      */
+    @Deprecated
     public static final AuthenticationManagerProxy AUTHENTICATION_MANAGER = new AuthenticationManagerProxy();
 
     /**
@@ -84,6 +85,7 @@ public class HudsonFilter implements Filter {
      * This proxy always delegate to {@code Hudson.getInstance().getSecurityRealm().getSecurityComponents().userDetails},
      * so use that instead.
      */
+    @Deprecated
     public static final UserDetailsServiceProxy USER_DETAILS_SERVICE_PROXY = new UserDetailsServiceProxy();
     
     /**
@@ -94,6 +96,7 @@ public class HudsonFilter implements Filter {
      * This proxy always delegate to {@code Hudson.getInstance().getSecurityRealm().getSecurityComponents().rememberMe},
      * so use that instead.
      */
+    @Deprecated
     public static final RememberMeServicesProxy REMEMBER_ME_SERVICES_PROXY = new RememberMeServicesProxy();
 
     public void init(FilterConfig filterConfig) throws ServletException {
@@ -101,7 +104,7 @@ public class HudsonFilter implements Filter {
         // this is how we make us available to the rest of Hudson.
         filterConfig.getServletContext().setAttribute(HudsonFilter.class.getName(),this);
         try {
-            Jenkins hudson = Jenkins.getInstance();
+            Jenkins hudson = Jenkins.getInstanceOrNull();
             if (hudson != null) {
                 // looks like we are initialized after Hudson came into being. initialize it now. See #3069
                 LOGGER.fine("Security wasn't initialized; Initializing it...");

@@ -39,6 +39,7 @@ import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
 
 import org.acegisecurity.Authentication;
+import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.StaplerRequest;
 
 /**
@@ -194,6 +195,7 @@ public abstract class AuthorizationStrategy extends AbstractDescribableImpl<Auth
      * @deprecated since 1.286
      *      Use {@link #all()} for read access, and {@link Extension} for registration.
      */
+    @Deprecated
     public static final DescriptorList<AuthorizationStrategy> LIST = new DescriptorList<AuthorizationStrategy>(AuthorizationStrategy.class);
     
     /**
@@ -230,7 +232,7 @@ public abstract class AuthorizationStrategy extends AbstractDescribableImpl<Auth
             }
         };
 
-        @Extension
+        @Extension @Symbol("unsecured")
         public static final class DescriptorImpl extends Descriptor<AuthorizationStrategy> {
             @Override
             public String getDisplayName() {

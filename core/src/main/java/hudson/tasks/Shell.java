@@ -35,6 +35,7 @@ import java.io.ObjectStreamException;
 import hudson.util.LineEndingConversion;
 import jenkins.security.MasterToSlaveCallable;
 import net.sf.json.JSONObject;
+import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.QueryParameter;
@@ -102,7 +103,7 @@ public class Shell extends CommandInterpreter {
         return new Shell(command);
     }
 
-    @Extension
+    @Extension @Symbol("shell")
     public static class DescriptorImpl extends BuildStepDescriptor<Builder> {
         /**
          * Shell executable, or null to default.
@@ -125,6 +126,7 @@ public class Shell extends CommandInterpreter {
          *  @deprecated 1.403
          *      Use {@link #getShellOrDefault(hudson.remoting.VirtualChannel) }.
          */
+        @Deprecated
         public String getShellOrDefault() {
             if(shell==null)
                 return Functions.isWindows() ?"sh":"/bin/sh";

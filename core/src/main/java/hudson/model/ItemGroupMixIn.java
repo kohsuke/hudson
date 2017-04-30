@@ -29,13 +29,18 @@ import hudson.model.listeners.ItemListener;
 import hudson.security.AccessControlled;
 import hudson.util.CopyOnWriteMap;
 import hudson.util.Function1;
-import hudson.util.IOUtils;
+import hudson.util.Secret;
 import jenkins.model.Jenkins;
+import jenkins.util.xml.XMLUtils;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletResponse;
+import javax.xml.transform.Source;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.stream.StreamResult;
+import javax.xml.transform.stream.StreamSource;
 import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
@@ -43,7 +48,10 @@ import java.io.InputStream;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import jenkins.security.NotReallyRoleSensitiveCallable;
+import org.acegisecurity.AccessDeniedException;
+import org.xml.sax.SAXException;
 
 /**
  * Defines a bunch of static methods to be used as a "mix-in" for {@link ItemGroup}
@@ -103,11 +111,11 @@ public abstract class ItemGroupMixIn {
                 // Try to retain the identity of an existing child object if we can.
                 V item = (V) parent.getItem(subdir.getName());
                 if (item == null) {
-                    XmlFile xmlFile = Items.getConfigFile( subdir );
+                    XmlFile xmlFile = Items.getConfigFile(subdir);
                     if (xmlFile.exists()) {
-                        item = (V) Items.load( parent, subdir );
-                    }else{
-                        Logger.getLogger( ItemGroupMixIn.class.getName() ).log( Level.WARNING, "could not find file " + xmlFile.getFile());
+                        item = (V) Items.load(parent, subdir);
+                    } else {
+                        Logger.getLogger(ItemGroupMixIn.class.getName()).log(Level.WARNING, "could not find file " + xmlFile.getFile());
                         continue;
                     }
                 } else {
@@ -132,7 +140,7 @@ public abstract class ItemGroupMixIn {
     };
 
     /**
-     * Creates a {@link TopLevelItem} from the submission of the '/lib/hudson/newFromList/formList'
+     * Creates a {@link TopLevelItem} for example from the submission of the {@code /lib/hudson/newFromList/form} tag
      * or throws an exception if it fails.
      */
     public synchronized TopLevelItem createTopLevelItem( StaplerRequest req, StaplerResponse rsp ) throws IOException, ServletException {
@@ -141,10 +149,14 @@ public abstract class ItemGroupMixIn {
         TopLevelItem result;
 
         String requestContentType = req.getContentType();
-        if(requestContentType==null)
+        String mode = req.getParameter("mode");
+        if (requestContentType == null
+                && !(mode != null && mode.equals("copy")))
             throw new Failure("No Content-Type header set");
 
-        boolean isXmlSubmission = requestContentType.startsWith("application/xml") || requestContentType.startsWith("text/xml");
+        boolean isXmlSubmission = requestContentType != null
+            && (requestContentType.startsWith("application/xml")
+                    || requestContentType.startsWith("text/xml"));
 
         String name = req.getParameter("name");
         if(name==null)
@@ -157,17 +169,11 @@ public abstract class ItemGroupMixIn {
                 throw new Failure(Messages.Hudson_JobAlreadyExists(name));
         }
 
-        String mode = req.getParameter("mode");
         if(mode!=null && mode.equals("copy")) {
             String from = req.getParameter("from");
 
             // resolve a name to Item
-            Item src = null;
-            if (!from.startsWith("/"))
-                src = parent.getItem(from);
-            if (src==null)
-                src = Jenkins.getInstance().getItemByFullName(from);
-
+            Item src = Jenkins.getInstance().getItem(from, parent);
             if(src==null) {
                 if(Util.fixEmpty(from)==null)
                     throw new Failure("Specify which job to copy");
@@ -190,6 +196,8 @@ public abstract class ItemGroupMixIn {
                 if (descriptor == null) {
                     throw new Failure("No item type ‘" + mode + "’ is known");
                 }
+                descriptor.checkApplicableIn(parent);
+                acl.getACL().checkCreatePermission(parent, descriptor);
 
                 // create empty job and redirect to the project config screen
                 result = createProject(descriptor, name, true);
@@ -214,11 +222,23 @@ public abstract class ItemGroupMixIn {
     public synchronized <T extends TopLevelItem> T copy(T src, String name) throws IOException {
         acl.checkPermission(Item.CREATE);
         src.checkPermission(Item.EXTENDED_READ);
+        XmlFile srcConfigFile = Items.getConfigFile(src);
+        if (!src.hasPermission(Item.CONFIGURE)) {
+            Matcher matcher = AbstractItem.SECRET_PATTERN.matcher(srcConfigFile.asString());
+            while (matcher.find()) {
+                if (Secret.decrypt(matcher.group(1)) != null) {
+                    // AccessDeniedException2 does not permit a custom message, and anyway redirecting the user to the login screen is obviously pointless.
+                    throw new AccessDeniedException(Messages.ItemGroupMixIn_may_not_copy_as_it_contains_secrets_and_(src.getFullName(), Jenkins.getAuthentication().getName(), Item.PERMISSIONS.title, Item.EXTENDED_READ.name, Item.CONFIGURE.name));
+                }
+            }
+        }
+        src.getDescriptor().checkApplicableIn(parent);
+        acl.getACL().checkCreatePermission(parent, src.getDescriptor());
 
         T result = (T)createProject(src.getDescriptor(),name,false);
 
         // copy config
-        Util.copyFile(Items.getConfigFile(src).getFile(),Items.getConfigFile(result).getFile());
+        Util.copyFile(srcConfigFile.getFile(), Items.getConfigFile(result).getFile());
 
         // reload from the new config
         final File rootDir = result.getRootDir();
@@ -249,8 +269,9 @@ public abstract class ItemGroupMixIn {
         File configXml = Items.getConfigFile(getRootDirFor(name)).getFile();
         final File dir = configXml.getParentFile();
         dir.mkdirs();
+        boolean success = false;
         try {
-            IOUtils.copy(xml,configXml);
+            XMLUtils.safeTransform((Source)new StreamSource(xml), new StreamResult(configXml));
 
             // load it
             TopLevelItem result = Items.whileUpdatingByXml(new NotReallyRoleSensitiveCallable<TopLevelItem,IOException>() {
@@ -258,22 +279,41 @@ public abstract class ItemGroupMixIn {
                     return (TopLevelItem) Items.load(parent, dir);
                 }
             });
+
+            success = acl.getACL().hasCreatePermission(Jenkins.getAuthentication(), parent, result.getDescriptor())
+                && result.getDescriptor().isApplicableIn(parent);
+
             add(result);
 
             ItemListener.fireOnCreated(result);
             Jenkins.getInstance().rebuildDependencyGraphAsync();
 
             return result;
+        } catch (TransformerException e) {
+            success = false;
+            throw new IOException("Failed to persist config.xml", e);
+        } catch (SAXException e) {
+            success = false;
+            throw new IOException("Failed to persist config.xml", e);
         } catch (IOException e) {
-            // if anything fails, delete the config file to avoid further confusion
-            Util.deleteRecursive(dir);
+            success = false;
             throw e;
+        } catch (RuntimeException e) {
+            success = false;
+            throw e;
+        } finally {
+            if (!success) {
+                // if anything fails, delete the config file to avoid further confusion
+                Util.deleteRecursive(dir);
+            }
         }
     }
 
     public synchronized TopLevelItem createProject( TopLevelItemDescriptor type, String name, boolean notify )
             throws IOException {
         acl.checkPermission(Item.CREATE);
+        type.checkApplicableIn(parent);
+        acl.getACL().checkCreatePermission(parent, type);
 
         Jenkins.getInstance().getProjectNamingStrategy().checkName(name);
         if(parent.getItem(name)!=null)
