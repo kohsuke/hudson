@@ -23,6 +23,10 @@
  */
 package hudson;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.ByteArrayInputStream;
+import java.io.SequenceInputStream;
+import java.io.Writer;
 import java.nio.charset.Charset;
 import java.security.interfaces.RSAPublicKey;
 import javax.annotation.Nullable;
@@ -50,11 +54,15 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.io.Charsets;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.output.NullOutputStream;
 import org.apache.commons.lang.StringUtils;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 /**
- * Listens to incoming TCP connections from JNLP agents and CLI.
+ * Listens to incoming TCP connections from JNLP agents and Remoting CLI.
  *
  * <p>
  * Aside from the HTTP endpoint, Jenkins runs {@link TcpSlaveAgentListener} that listens on a TCP socket.
@@ -90,7 +98,7 @@ public final class TcpSlaveAgentListener extends Thread {
         }
         this.configuredPort = port;
 
-        LOGGER.log(Level.FINE, "JNLP agent listener started on TCP port {0}", getPort());
+        LOGGER.log(Level.FINE, "TCP agent listener started on port {0}", getPort());
 
         start();
     }
@@ -150,7 +158,7 @@ public final class TcpSlaveAgentListener extends Thread {
             }
         } catch (IOException e) {
             if(!shuttingDown) {
-                LOGGER.log(Level.SEVERE,"Failed to accept JNLP agent connections",e);
+                LOGGER.log(Level.SEVERE,"Failed to accept TCP connections", e);
             }
         }
     }
@@ -165,6 +173,7 @@ public final class TcpSlaveAgentListener extends Thread {
             if (localAddress instanceof InetSocketAddress) {
                 InetSocketAddress address = (InetSocketAddress) localAddress;
                 Socket client = new Socket(address.getHostName(), address.getPort());
+                client.setSoTimeout(1000); // waking the acceptor loop should be quick
                 new PingAgentProtocol().connect(client);
             }
         } catch (IOException e) {
@@ -195,20 +204,33 @@ public final class TcpSlaveAgentListener extends Thread {
         @Override
         public void run() {
             try {
-                LOGGER.log(Level.INFO, "Accepted connection #{0} from {1}", new Object[]{id,s.getRemoteSocketAddress()});
+                LOGGER.log(Level.FINE, "Accepted connection #{0} from {1}", new Object[] {id, s.getRemoteSocketAddress()});
 
                 DataInputStream in = new DataInputStream(s.getInputStream());
                 PrintWriter out = new PrintWriter(
                         new BufferedWriter(new OutputStreamWriter(s.getOutputStream(),"UTF-8")),
                         true); // DEPRECATED: newer protocol shouldn't use PrintWriter but should use DataOutputStream
 
-                String s = in.readUTF();
+                // peek the first few bytes to determine what to do with this client
+                byte[] head = new byte[10];
+                in.readFully(head);
+
+                String header = new String(head, Charsets.US_ASCII);
+                if (header.startsWith("GET ")) {
+                    // this looks like an HTTP client
+                    respondHello(header,s);
+                    return;
+                }
+
+                // otherwise assume this is AgentProtocol and start from the beginning
+                String s = new DataInputStream(new SequenceInputStream(new ByteArrayInputStream(head),in)).readUTF();
 
                 if(s.startsWith("Protocol:")) {
                     String protocol = s.substring(9);
                     AgentProtocol p = AgentProtocol.of(protocol);
                     if (p!=null) {
                         if (Jenkins.getInstance().getAgentProtocols().contains(protocol)) {
+                            LOGGER.log(p instanceof PingAgentProtocol ? Level.FINE : Level.INFO, "Accepted {0} connection #{1} from {2}", new Object[] {protocol, id, this.s.getRemoteSocketAddress()});
                             p.handle(this.s);
                         } else {
                             error(out, "Disabled protocol:" + s);
@@ -222,22 +244,58 @@ public final class TcpSlaveAgentListener extends Thread {
                 LOGGER.log(Level.WARNING,"Connection #"+id+" aborted",e);
                 try {
                     s.close();
-                } catch (IOException _) {
+                } catch (IOException ex) {
                     // try to clean up the socket
                 }
             } catch (IOException e) {
                 LOGGER.log(Level.WARNING,"Connection #"+id+" failed",e);
                 try {
                     s.close();
-                } catch (IOException _) {
+                } catch (IOException ex) {
                     // try to clean up the socket
                 }
             }
         }
 
+        /**
+         * Respond to HTTP request with simple diagnostics.
+         * Primarily used to test the low-level connectivity.
+         */
+        private void respondHello(String header, Socket s) throws IOException {
+            try {
+                Writer o = new OutputStreamWriter(s.getOutputStream(), "UTF-8");
+
+                if (header.startsWith("GET / ")) {
+                    o.write("HTTP/1.0 200 OK\r\n");
+                    o.write("Content-Type: text/plain;charset=UTF-8\r\n");
+                    o.write("\r\n");
+                    o.write("Jenkins-Agent-Protocols: " + getAgentProtocolNames()+"\r\n");
+                    o.write("Jenkins-Version: " + Jenkins.VERSION + "\r\n");
+                    o.write("Jenkins-Session: " + Jenkins.SESSION_HASH + "\r\n");
+                    o.write("Client: " + s.getInetAddress().getHostAddress() + "\r\n");
+                    o.write("Server: " + s.getLocalAddress().getHostAddress() + "\r\n");
+                    o.flush();
+                    s.shutdownOutput();
+                } else {
+                    o.write("HTTP/1.0 404 Not Found\r\n");
+                    o.write("Content-Type: text/plain;charset=UTF-8\r\n");
+                    o.write("\r\n");
+                    o.write("Not Found\r\n");
+                    o.flush();
+                    s.shutdownOutput();
+                }
+
+                InputStream i = s.getInputStream();
+                IOUtils.copy(i, new NullOutputStream());
+                s.shutdownInput();
+            } finally {
+                s.close();
+            }
+        }
+
         private void error(PrintWriter out, String msg) throws IOException {
             out.println(msg);
-            LOGGER.log(Level.WARNING,"Connection #"+id+" is aborted: "+msg);
+            LOGGER.log(Level.WARNING, "Connection #{0} is aborted: {1}", new Object[]{id, msg});
             s.close();
         }
     }
@@ -285,14 +343,11 @@ public final class TcpSlaveAgentListener extends Thread {
         @Override
         public void handle(Socket socket) throws IOException, InterruptedException {
             try {
-                OutputStream stream = socket.getOutputStream();
-                try {
+                try (OutputStream stream = socket.getOutputStream()) {
                     LOGGER.log(Level.FINE, "Received ping request from {0}", socket.getRemoteSocketAddress());
                     stream.write(ping);
                     stream.flush();
                     LOGGER.log(Level.FINE, "Sent ping response to {0}", socket.getRemoteSocketAddress());
-                } finally {
-                    stream.close();
                 }
             } finally {
                 socket.close();
@@ -301,29 +356,24 @@ public final class TcpSlaveAgentListener extends Thread {
 
         public boolean connect(Socket socket) throws IOException {
             try {
-                DataOutputStream out = null;
-                InputStream in = null;
-                try {
-                    LOGGER.log(Level.FINE, "Requesting ping from {0}", socket.getRemoteSocketAddress());
-                    out = new DataOutputStream(socket.getOutputStream());
+                LOGGER.log(Level.FINE, "Requesting ping from {0}", socket.getRemoteSocketAddress());
+                try (DataOutputStream out = new DataOutputStream(socket.getOutputStream())) {
                     out.writeUTF("Protocol:Ping");
-                    in = socket.getInputStream();
-                    byte[] response = new byte[ping.length];
-                    int responseLength = in.read(response);
-                    if (responseLength == ping.length && Arrays.equals(response, ping)) {
-                        LOGGER.log(Level.FINE, "Received ping response from {0}", socket.getRemoteSocketAddress());
-                        return true;
-                    } else {
-                        LOGGER.log(Level.FINE, "Expected ping response from {0} of {1} got {2}", new Object[]{
-                                socket.getRemoteSocketAddress(),
-                                new String(ping, "UTF-8"),
-                                new String(response, 0, responseLength, "UTF-8")
-                        });
-                        return false;
+                    try (InputStream in = socket.getInputStream()) {
+                        byte[] response = new byte[ping.length];
+                        int responseLength = in.read(response);
+                        if (responseLength == ping.length && Arrays.equals(response, ping)) {
+                            LOGGER.log(Level.FINE, "Received ping response from {0}", socket.getRemoteSocketAddress());
+                            return true;
+                        } else {
+                            LOGGER.log(Level.FINE, "Expected ping response from {0} of {1} got {2}", new Object[]{
+                                    socket.getRemoteSocketAddress(),
+                                    new String(ping, "UTF-8"),
+                                    new String(response, 0, responseLength, "UTF-8")
+                            });
+                            return false;
+                        }
                     }
-                } finally {
-                    IOUtils.closeQuietly(out);
-                    IOUtils.closeQuietly(in);
                 }
             } finally {
                 socket.close();
@@ -351,6 +401,8 @@ public final class TcpSlaveAgentListener extends Thread {
      *
      * TODO: think about how to expose this (including whether this needs to be exposed at all.)
      */
+    @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "Accessible via System Groovy Scripts")
+    @Restricted(NoExternalUse.class)
     public static String CLI_HOST_NAME = SystemProperties.getString(TcpSlaveAgentListener.class.getName()+".hostName");
 
     /**
@@ -363,6 +415,8 @@ public final class TcpSlaveAgentListener extends Thread {
      *
      * @since 1.611
      */
+    @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "Accessible via System Groovy Scripts")
+    @Restricted(NoExternalUse.class)
     public static Integer CLI_PORT = SystemProperties.getInteger(TcpSlaveAgentListener.class.getName()+".port");
 }
 
