@@ -28,6 +28,7 @@ import hudson.Extension;
 import hudson.DescriptorExtensionList;
 import hudson.model.Computer;
 import hudson.model.Slave;
+import hudson.security.PermissionScope;
 import hudson.slaves.NodeProvisioner.PlannedNode;
 import hudson.model.Describable;
 import jenkins.model.Jenkins;
@@ -42,6 +43,7 @@ import hudson.util.DescriptorList;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import java.util.Collection;
+import java.util.concurrent.Future;
 
 /**
  * Creates {@link Node}s to dynamically expand/shrink the agents attached to Hudson.
@@ -51,14 +53,12 @@ import java.util.Collection;
  * needed to start a new agent programmatically.
  *
  * <h2>Notes for implementers</h2>
- * <h4>Automatically delete idle agents</h4>
- * <p>
+ * <h3>Automatically delete idle agents</h3>
  * Nodes provisioned from a cloud do not automatically get released just because it's created from {@link Cloud}.
  * Doing so requires a use of {@link RetentionStrategy}. Instantiate your {@link Slave} subtype with something
  * like {@link CloudSlaveRetentionStrategy} so that it gets automatically deleted after some idle time.
  *
- * <h4>Freeing an external resource when an agent is removed</h4>
- * <p>
+ * <h3>Freeing an external resource when an agent is removed</h3>
  * Whether you do auto scale-down or not, you often want to release an external resource tied to a cloud-allocated
  * agent when it is removed.
  *
@@ -136,7 +136,7 @@ public abstract class Cloud extends AbstractModelObject implements ExtensionPoin
      *      for jobs that don't have any tie to any label.
      * @param excessWorkload
      *      Number of total executors needed to meet the current demand.
-     *      Always >= 1. For example, if this is 3, the implementation
+     *      Always ≥ 1. For example, if this is 3, the implementation
      *      should launch 3 agents with 1 executor each, or 1 agent with
      *      3 executors, etc.
      * @return
@@ -175,10 +175,14 @@ public abstract class Cloud extends AbstractModelObject implements ExtensionPoin
         return Jenkins.getInstance().<Cloud,Descriptor<Cloud>>getDescriptorList(Cloud.class);
     }
 
+    private static final PermissionScope PERMISSION_SCOPE = new PermissionScope(Cloud.class);
+
     /**
      * Permission constant to control mutation operations on {@link Cloud}.
      *
      * This includes provisioning a new node, as well as removing it.
      */
-    public static final Permission PROVISION = Jenkins.ADMINISTER;
+    public static final Permission PROVISION = new Permission(
+            Computer.PERMISSIONS, "Provision", Messages._Cloud_ProvisionPermission_Description(), Jenkins.ADMINISTER, PERMISSION_SCOPE
+    );
 }

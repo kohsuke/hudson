@@ -633,7 +633,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
                     throw (InterruptedException)new InterruptedException().initCause(e);
                 } catch (IOException e) {
                     // checkout error not yet reported
-                    e.printStackTrace(listener.getLogger());
+                    Functions.printStackTrace(e, listener.getLogger());
                 }
 
                 if (retryCount == 0)   // all attempts failed
@@ -749,7 +749,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
                 listener.error("Step ‘" + buildStep + "’ failed: " + e.getMessage());
             } else {
                 String msg = "Step ‘" + buildStep + "’ aborted due to exception: ";
-                e.printStackTrace(listener.error(msg));
+                Functions.printStackTrace(e, listener.error(msg));
                 LOGGER.log(WARNING, msg, e);
             }
 
@@ -784,8 +784,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
                 // Channel is closed, do not continue
                 reportBrokenChannel(listener);
             } catch (RuntimeException ex) {
-
-                ex.printStackTrace(listener.error("Build step failed with exception"));
+                Functions.printStackTrace(ex, listener.error("Build step failed with exception"));
             }
 
             for (BuildStepListener bsl : BuildStepListener.all()) {
@@ -854,7 +853,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
     }
 
 	/*
-     * No need to to lock the entire AbstractBuild on change set calculcation
+     * No need to lock the entire AbstractBuild on change set calculation
      */
     private transient Object changeSetLock = new Object();
     
@@ -1054,7 +1053,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
     }
 
     /**
-     * @deprecated Use {@link #getAction(Class)} on {@link AbstractTestResultAction}.
+     * @deprecated Use {@link #getAction(Class)} on {@code AbstractTestResultAction}.
      */
     @Deprecated
     public Action getTestResultAction() {
@@ -1066,7 +1065,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
     }
 
     /**
-     * @deprecated Use {@link #getAction(Class)} on {@link AggregatedTestResultAction}.
+     * @deprecated Use {@link #getAction(Class)} on {@code AggregatedTestResultAction}.
      */
     @Deprecated
     public Action getAggregatedTestResultAction() {
@@ -1348,6 +1347,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P,R>,R extends Abs
      *      Use {@link #doStop()}
      */
     @Deprecated
+    @RequirePOST // #doStop() should be preferred, but better to be safe
     public void doStop(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
         doStop().generateResponse(req,rsp,this);
     }

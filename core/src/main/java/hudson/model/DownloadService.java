@@ -57,6 +57,7 @@ import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.Stapler;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.interceptor.RequirePOST;
 
 /**
  * Service for plugins to periodically retrieve update data files
@@ -70,6 +71,11 @@ import org.kohsuke.stapler.StaplerResponse;
  */
 @Extension
 public class DownloadService extends PageDecorator {
+
+    /**
+     * the prefix for the signature validator name
+     */
+    private static final String signatureValidatorPrefix = "downloadable";
     /**
      * Builds up an HTML fragment that starts all the download jobs.
      */
@@ -163,8 +169,7 @@ public class DownloadService extends PageDecorator {
      */
     @Restricted(NoExternalUse.class)
     public static String loadJSON(URL src) throws IOException {
-        InputStream is = ProxyConfiguration.open(src).getInputStream();
-        try {
+        try (InputStream is = ProxyConfiguration.open(src).getInputStream()) {
             String jsonp = IOUtils.toString(is, "UTF-8");
             int start = jsonp.indexOf('{');
             int end = jsonp.lastIndexOf('}');
@@ -173,8 +178,6 @@ public class DownloadService extends PageDecorator {
             } else {
                 throw new IOException("Could not find JSON in " + src);
             }
-        } finally {
-            is.close();
         }
     }
 
@@ -186,8 +189,7 @@ public class DownloadService extends PageDecorator {
      */
     @Restricted(NoExternalUse.class)
     public static String loadJSONHTML(URL src) throws IOException {
-        InputStream is = ProxyConfiguration.open(src).getInputStream();
-        try {
+        try (InputStream is = ProxyConfiguration.open(src).getInputStream()) {
             String jsonp = IOUtils.toString(is, "UTF-8");
             String preamble = "window.parent.postMessage(JSON.stringify(";
             int start = jsonp.indexOf(preamble);
@@ -197,8 +199,6 @@ public class DownloadService extends PageDecorator {
             } else {
                 throw new IOException("Could not find JSON in " + src);
             }
-        } finally {
-            is.close();
         }
     }
 
@@ -371,6 +371,7 @@ public class DownloadService extends PageDecorator {
         /**
          * This is where the browser sends us the data. 
          */
+        @RequirePOST
         public void doPostBack(StaplerRequest req, StaplerResponse rsp) throws IOException {
             DownloadSettings.checkPostBackAccess();
             long dataTimestamp = System.currentTimeMillis();
@@ -397,7 +398,11 @@ public class DownloadService extends PageDecorator {
         public FormValidation updateNow() throws IOException {
             List<JSONObject> jsonList = new ArrayList<>();
             boolean toolInstallerMetadataExists = false;
-            for (String site : getUrls()) {
+            for (UpdateSite updatesite : Jenkins.getActiveInstance().getUpdateCenter().getSiteList()) {
+                String site = updatesite.getMetadataUrlForDownloadable(url);
+                if (site == null) {
+                    return FormValidation.warning("The update site " + site + " does not look like an update center");
+                }
                 String jsonString;
                 try {
                     jsonString = loadJSONHTML(new URL(site + ".html?id=" + URLEncoder.encode(getId(), "UTF-8") + "&version=" + URLEncoder.encode(Jenkins.VERSION, "UTF-8")));
@@ -408,7 +413,7 @@ public class DownloadService extends PageDecorator {
                 }
                 JSONObject o = JSONObject.fromObject(jsonString);
                 if (signatureCheck) {
-                    FormValidation e = new JSONSignatureValidator("downloadable '"+id+"'").verifySignature(o);
+                    FormValidation e = updatesite.getJsonSignatureValidator(signatureValidatorPrefix +" '"+id+"'").verifySignature(o);
                     if (e.kind!= Kind.OK) {
                         LOGGER.log(Level.WARNING, "signature check failed for " + site, e );
                         continue;

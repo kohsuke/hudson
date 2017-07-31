@@ -7,7 +7,6 @@ import hudson.model.AbstractProject;
 import hudson.model.Item;
 import hudson.model.PermalinkProjectAction.Permalink;
 import org.kohsuke.args4j.Argument;
-import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.Option;
 
 import java.io.IOException;
@@ -76,14 +75,12 @@ public class ConsoleCommand extends CLICommand {
                 do {
                     logText = run.getLogText();
                     pos = logText.writeLogTo(pos, w);
+                    // TODO should sleep as in Run.writeWholeLogTo
                 } while (!logText.isComplete());
             } else {
-                InputStream logInputStream = run.getLogInputStream();
-                try {
-                    IOUtils.skip(logInputStream,pos);
-                    org.apache.commons.io.IOUtils.copy(new InputStreamReader(logInputStream,run.getCharset()),w);
-                } finally {
-                    logInputStream.close();
+                try (InputStream logInputStream = run.getLogInputStream()) {
+                    IOUtils.skip(logInputStream, pos);
+                    IOUtils.copy(new InputStreamReader(logInputStream, run.getCharset()), w);
                 }
             }
         } finally {
@@ -120,8 +117,7 @@ public class ConsoleCommand extends CLICommand {
         }
         RingBuffer rb = new RingBuffer();
 
-        InputStream in = run.getLogInputStream();
-        try {
+        try (InputStream in = run.getLogInputStream()) {
             byte[] buf = new byte[4096];
             int len;
             byte prev=0;
@@ -140,8 +136,6 @@ public class ConsoleCommand extends CLICommand {
             }
 
             return rb.get();
-        } finally {
-            org.apache.commons.io.IOUtils.closeQuietly(in);
         }
     }
 
