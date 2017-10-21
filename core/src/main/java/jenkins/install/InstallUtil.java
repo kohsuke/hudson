@@ -40,6 +40,7 @@ import javax.annotation.Nonnull;
 import javax.inject.Provider;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang.StringUtils;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
@@ -53,6 +54,7 @@ import hudson.model.UpdateCenter.DownloadJob.Installing;
 import hudson.model.UpdateCenter.InstallationJob;
 import hudson.model.UpdateCenter.UpdateCenterJob;
 import hudson.util.VersionNumber;
+import java.util.logging.Level;
 import jenkins.model.Jenkins;
 import jenkins.util.SystemProperties;
 import jenkins.util.xml.XMLUtils;
@@ -69,6 +71,7 @@ public class InstallUtil {
 
     // tests need this to be 1.0
     private static final VersionNumber NEW_INSTALL_VERSION = new VersionNumber("1.0");
+    private static final VersionNumber FORCE_NEW_INSTALL_VERSION = new VersionNumber("0.0");
 
     /**
      * Simple chain pattern using iterator.next()
@@ -89,7 +92,7 @@ public class InstallUtil {
      */
     public static void proceedToNextStateFrom(InstallState prior) {
         InstallState next = getNextInstallState(prior);
-        if (Main.isDevelopmentMode) LOGGER.info("Install state tranisitioning from: " + prior + " to: " + next);
+        if (Main.isDevelopmentMode) LOGGER.info("Install state transitioning from: " + prior + " to: " + next);
         if (next != null) {
             Jenkins.getInstance().setInstallState(next);
         }
@@ -166,7 +169,7 @@ public class InstallUtil {
 
         // Neither the top level config or the lastExecVersionFile have a version
         // stored in them, which means it's a new install.
-        if (lastRunVersion.compareTo(NEW_INSTALL_VERSION) == 0) {
+        if (FORCE_NEW_INSTALL_VERSION.equals(lastRunVersion) || lastRunVersion.compareTo(NEW_INSTALL_VERSION) == 0) {
             Jenkins j = Jenkins.getInstance();
             
             // Allow for skipping
@@ -181,11 +184,13 @@ public class InstallUtil {
                 }
             }
 
-            // Edge case: used Jenkins 1 but did not save the system config page,
-            // the version is not persisted and returns 1.0, so try to check if
-            // they actually did anything
-            if (!j.getItemMap().isEmpty() || !j.getNodes().isEmpty()) {
-                return InstallState.UPGRADE;
+            if (!FORCE_NEW_INSTALL_VERSION.equals(lastRunVersion)) {
+                // Edge case: used Jenkins 1 but did not save the system config page,
+                // the version is not persisted and returns 1.0, so try to check if
+                // they actually did anything
+                if (!j.getItemMap().isEmpty() || !j.getNodes().isEmpty()) {
+                    return InstallState.UPGRADE;
+                }
             }
             
             return InstallState.INITIAL_SECURITY_SETUP;
@@ -227,7 +232,13 @@ public class InstallUtil {
         File lastExecVersionFile = getLastExecVersionFile();
         if (lastExecVersionFile.exists()) {
             try {
-                return FileUtils.readFileToString(lastExecVersionFile);
+                String version = FileUtils.readFileToString(lastExecVersionFile);
+                // JENKINS-37438 blank will force the setup
+                // wizard regardless of current state of the system
+                if (StringUtils.isBlank(version)) {
+                    return FORCE_NEW_INSTALL_VERSION.toString();
+                }
+                return version;
             } catch (IOException e) {
                 LOGGER.log(SEVERE, "Unexpected Error. Unable to read " + lastExecVersionFile.getAbsolutePath(), e);
                 LOGGER.log(WARNING, "Unable to determine the last running version (see error above). Treating this as a restart. No plugins will be updated.");
@@ -246,6 +257,7 @@ public class InstallUtil {
                 try {
                     String lastVersion = XMLUtils.getValue("/hudson/version", configFile);
                     if (lastVersion.length() > 0) {
+                        LOGGER.log(Level.FINE, "discovered serialized lastVersion {0}", lastVersion);
                         return lastVersion;
                     }
                 } catch (Exception e) {
