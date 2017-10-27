@@ -23,10 +23,11 @@
  */
 package hudson;
 
+import java.nio.file.InvalidPathException;
 import jenkins.util.SystemProperties;
 import com.sun.jna.Native;
 
-import edu.umd.cs.findbugs.annotations.SuppressWarnings;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Proc.LocalProc;
 import hudson.model.TaskListener;
 import hudson.os.PosixAPI;
@@ -197,14 +198,13 @@ public class Util {
 
         StringBuilder str = new StringBuilder((int)logfile.length());
 
-        BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(logfile),charset));
-        try {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(Files.newInputStream(logfile.toPath()), charset))) {
             char[] buf = new char[1024];
             int len;
-            while((len=r.read(buf,0,buf.length))>0)
-               str.append(buf,0,len);
-        } finally {
-            r.close();
+            while ((len = r.read(buf, 0, buf.length)) > 0)
+                str.append(buf, 0, len);
+        } catch (InvalidPathException e) {
+            throw new IOException(e);
         }
 
         return str.toString();
@@ -286,7 +286,11 @@ public class Util {
 
             if(!f.delete() && f.exists()) {
                 // trouble-shooting.
-                Files.deleteIfExists(f.toPath());
+                try {
+                    Files.deleteIfExists(f.toPath());
+                } catch (InvalidPathException e) {
+                    throw new IOException(e);
+                }
 
                 // see https://java.net/projects/hudson/lists/users/archive/2008-05/message/357
                 // I suspect other processes putting files in this directory
@@ -405,6 +409,8 @@ public class Util {
      * @return false if it is ok to continue trying to delete things, true if
      *         we were interrupted (and should stop now).
      */
+    @SuppressFBWarnings(value = "DM_GC", justification = "Garbage collection happens only when "
+            + "GC_AFTER_FAILED_DELETE is true. It's an experimental feature in Jenkins.")
     private static boolean pauseBetweenDeletes(int numberOfAttemptsSoFar) {
         long delayInMs;
         if( numberOfAttemptsSoFar>=DELETION_MAX ) return false;
@@ -489,16 +495,29 @@ public class Util {
      */
     //Taken from http://svn.apache.org/viewvc/maven/shared/trunk/file-management/src/main/java/org/apache/maven/shared/model/fileset/util/FileSetManager.java?view=markup
     public static boolean isSymlink(@Nonnull File file) throws IOException {
-        Boolean r = isSymlinkJava7(file);
-        if (r != null) {
-            return r;
-        }
+        /*
+         *  Windows Directory Junctions are effectively the same as Linux symlinks to directories.
+         *  Unfortunately, the Java 7 NIO2 API function isSymbolicLink does not treat them as such.
+         *  It thinks of them as normal directories.  To use the NIO2 API & treat it like a symlink,
+         *  you have to go through BasicFileAttributes and do the following check:
+         *     isSymbolicLink() || isOther()
+         *  The isOther() call will include Windows reparse points, of which a directory junction is.
+         *
+         *  Since we already have a function that detects Windows junctions or symlinks and treats them
+         *  both as symlinks, let's use that function and always call it before calling down to the
+         *  NIO2 API.
+         *
+         */
         if (Functions.isWindows()) {
             try {
                 return Kernel32Utils.isJunctionOrSymlink(file);
             } catch (UnsupportedOperationException | LinkageError e) {
                 // fall through
             }
+        }
+        Boolean r = isSymlinkJava7(file);
+        if (r != null) {
+            return r;
         }
         String name = file.getName();
         if (name.equals(".") || name.equals(".."))
@@ -514,7 +533,7 @@ public class Util {
         return !fileInCanonicalParent.getCanonicalFile().equals( fileInCanonicalParent.getAbsoluteFile() );
     }
 
-    @SuppressWarnings("NP_BOOLEAN_RETURN_NULL")
+    @SuppressFBWarnings("NP_BOOLEAN_RETURN_NULL")
     private static Boolean isSymlinkJava7(@Nonnull File file) throws IOException {
         try {
             Path path = file.toPath();
@@ -549,10 +568,29 @@ public class Util {
     }
 
     /**
+     * A check if a file path is a descendant of a parent path
+     * @param forParent the parent the child should be a descendant of
+     * @param potentialChild the path to check
+     * @return true if so
+     * @throws IOException for invalid paths
+     * @since 2.80
+     * @see InvalidPathException
+     */
+    public static boolean isDescendant(File forParent, File potentialChild) throws IOException {
+        try {
+            Path child = potentialChild.getAbsoluteFile().toPath().normalize();
+            Path parent = forParent.getAbsoluteFile().toPath().normalize();
+            return child.startsWith(parent);
+        } catch (InvalidPathException e) {
+            throw new IOException(e);
+        }
+    }
+
+    /**
      * Creates a new temporary directory.
      */
     public static File createTempDir() throws IOException {
-        File tmp = File.createTempFile("hudson", "tmp");
+        File tmp = File.createTempFile("jenkins", "tmp");
         if(!tmp.delete())
             throw new IOException("Failed to delete "+tmp);
         if(!tmp.mkdirs())
@@ -632,6 +670,10 @@ public class Util {
         }
     }
 
+    /**
+     * @deprecated Use {@link IOUtils#copy(InputStream, OutputStream)}
+     */
+    @Deprecated
     public static void copyStream(@Nonnull InputStream in,@Nonnull OutputStream out) throws IOException {
         byte[] buf = new byte[8192];
         int len;
@@ -639,6 +681,10 @@ public class Util {
             out.write(buf,0,len);
     }
 
+    /**
+     * @deprecated Use {@link IOUtils#copy(Reader, Writer)}
+     */
+    @Deprecated
     public static void copyStream(@Nonnull Reader in, @Nonnull Writer out) throws IOException {
         char[] buf = new char[8192];
         int len;
@@ -646,21 +692,23 @@ public class Util {
             out.write(buf,0,len);
     }
 
+    /**
+     * @deprecated Use {@link IOUtils#copy(InputStream, OutputStream)} in a {@code try}-with-resources block
+     */
+    @Deprecated
     public static void copyStreamAndClose(@Nonnull InputStream in, @Nonnull OutputStream out) throws IOException {
-        try {
+        try (InputStream _in = in; OutputStream _out = out) { // make sure both are closed, and use Throwable.addSuppressed
             copyStream(in,out);
-        } finally {
-            IOUtils.closeQuietly(in);
-            IOUtils.closeQuietly(out);
         }
     }
 
+    /**
+     * @deprecated Use {@link IOUtils#copy(Reader, Writer)} in a {@code try}-with-resources block
+     */
+    @Deprecated
     public static void copyStreamAndClose(@Nonnull Reader in, @Nonnull Writer out) throws IOException {
-        try {
+        try (Reader _in = in; Writer _out = out) {
             copyStream(in,out);
-        } finally {
-            IOUtils.closeQuietly(in);
-            IOUtils.closeQuietly(out);
         }
     }
 
@@ -752,12 +800,9 @@ public class Util {
             MessageDigest md5 = MessageDigest.getInstance("MD5");
 
             byte[] buffer = new byte[1024];
-            DigestInputStream in =new DigestInputStream(source,md5);
-            try {
-                while(in.read(buffer)>=0)
+            try (DigestInputStream in = new DigestInputStream(source, md5)) {
+                while (in.read(buffer) >= 0)
                     ; // simply discard the input
-            } finally {
-                in.close();
             }
             return toHexString(md5.digest());
         } catch (NoSuchAlgorithmException e) {
@@ -790,11 +835,10 @@ public class Util {
      */
     @Nonnull
     public static String getDigestOf(@Nonnull File file) throws IOException {
-        InputStream is = new FileInputStream(file);
-        try {
+        try (InputStream is = Files.newInputStream(file.toPath())) {
             return getDigestOf(new BufferedInputStream(is));
-        } finally {
-            is.close();
+        } catch (InvalidPathException e) {
+            throw new IOException(e);
         }
     }
 
@@ -1127,7 +1171,11 @@ public class Util {
      * Creates an empty file.
      */
     public static void touch(@Nonnull File file) throws IOException {
-        new FileOutputStream(file).close();
+        try {
+            Files.newOutputStream(file.toPath()).close();
+        } catch (InvalidPathException e) {
+            throw new IOException(e);
+        }
     }
 
     /**
@@ -1360,7 +1408,7 @@ public class Util {
             PrintStream log = listener.getLogger();
             log.printf("ln %s %s failed%n",targetPath, new File(baseDir, symlinkPath));
             Util.displayIOException(e,listener);
-            e.printStackTrace( log );
+            Functions.printStackTrace(e, log);
         }
     }
 
@@ -1591,6 +1639,7 @@ public class Util {
 
     /**
      * Return true iff the parameter does not denote an absolute URI and not a scheme-relative URI.
+     * @since 2.3 / 1.651.2
      */
     public static boolean isSafeToRedirectTo(@Nonnull String uri) {
         return !isAbsoluteUri(uri) && !uri.startsWith("//");
@@ -1615,6 +1664,28 @@ public class Util {
         Properties p = new Properties();
         p.load(new StringReader(properties));
         return p;
+    }
+    
+    /**
+     * Closes the item and logs error to the log in the case of error.
+     * Logging will be performed on the {@code WARNING} level.
+     * @param toClose Item to close. Nothing will happen if it is {@code null}
+     * @param logger Logger, which receives the error
+     * @param closeableName Name of the closeable item
+     * @param closeableOwner String representation of the closeable holder
+     * @since 2.19, but TODO update once un-restricted
+     */
+    @Restricted(NoExternalUse.class)
+    public static void closeAndLogFailures(@CheckForNull Closeable toClose, @Nonnull Logger logger, 
+            @Nonnull String closeableName, @Nonnull String closeableOwner) {
+        if (toClose == null) {
+            return;
+        }
+        try {
+            toClose.close();
+        } catch(IOException ex) {
+            logger.log(Level.WARNING, String.format("Failed to close %s of %s", closeableName, closeableOwner), ex);
+        }
     }
 
     public static final FastDateFormat XS_DATETIME_FORMATTER = FastDateFormat.getInstance("yyyy-MM-dd'T'HH:mm:ss'Z'",new SimpleTimeZone(0,"GMT"));

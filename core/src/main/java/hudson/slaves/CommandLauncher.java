@@ -27,11 +27,13 @@ import hudson.AbortException;
 import hudson.EnvVars;
 import hudson.Util;
 import hudson.Extension;
+import hudson.Functions;
 import hudson.model.Descriptor;
 import hudson.model.Slave;
 import jenkins.model.Jenkins;
 import hudson.model.TaskListener;
 import hudson.remoting.Channel;
+import hudson.security.ACL;
 import hudson.util.StreamCopyThread;
 import hudson.util.FormValidation;
 import hudson.util.ProcessTree;
@@ -73,6 +75,12 @@ public class CommandLauncher extends ComputerLauncher {
     public CommandLauncher(String command, EnvVars env) {
     	this.agentCommand = command;
     	this.env = env;
+        Jenkins.getInstance().checkPermission(Jenkins.RUN_SCRIPTS);
+    }
+    
+    private Object readResolve() {
+        Jenkins.getInstance().checkPermission(Jenkins.RUN_SCRIPTS);
+        return this;
     }
 
     public String getCommand() {
@@ -113,7 +121,8 @@ public class CommandLauncher extends ComputerLauncher {
                 if (rootUrl!=null) {
                     pb.environment().put("HUDSON_URL", rootUrl);    // for backward compatibility
                     pb.environment().put("JENKINS_URL", rootUrl);
-                    pb.environment().put("SLAVEJAR_URL", rootUrl+"/jnlpJars/slave.jar");
+                    pb.environment().put("SLAVEJAR_URL", rootUrl+"/jnlpJars/agent.jar");
+                    pb.environment().put("AGENTJAR_URL", rootUrl+"/jnlpJars/agent.jar");
                 }
             }
 
@@ -143,11 +152,11 @@ public class CommandLauncher extends ComputerLauncher {
 
             LOGGER.info("agent launched for " + computer.getDisplayName());
         } catch (InterruptedException e) {
-            e.printStackTrace(listener.error(Messages.ComputerLauncher_abortedLaunch()));
+            Functions.printStackTrace(e, listener.error(Messages.ComputerLauncher_abortedLaunch()));
         } catch (RuntimeException e) {
-            e.printStackTrace(listener.error(Messages.ComputerLauncher_unexpectedError()));
+            Functions.printStackTrace(e, listener.error(Messages.ComputerLauncher_unexpectedError()));
         } catch (Error e) {
-            e.printStackTrace(listener.error(Messages.ComputerLauncher_unexpectedError()));
+            Functions.printStackTrace(e, listener.error(Messages.ComputerLauncher_unexpectedError()));
         } catch (IOException e) {
             Util.displayIOException(e, listener);
 
@@ -156,17 +165,18 @@ public class CommandLauncher extends ComputerLauncher {
                 msg = "";
             } else {
                 msg = " : " + msg;
+                // FIXME TODO i18n what is this!?
             }
             msg = hudson.model.Messages.Slave_UnableToLaunch(computer.getDisplayName(), msg);
             LOGGER.log(Level.SEVERE, msg, e);
-            e.printStackTrace(listener.error(msg));
+            Functions.printStackTrace(e, listener.error(msg));
 
             if(_proc!=null) {
                 reportProcessTerminated(_proc, listener);
                 try {
                     ProcessTree.get().killAll(_proc, _cookie);
                 } catch (InterruptedException x) {
-                    x.printStackTrace(listener.error(Messages.ComputerLauncher_abortedLaunch()));
+                    Functions.printStackTrace(x, listener.error(Messages.ComputerLauncher_abortedLaunch()));
                 }
             }
         }
@@ -190,6 +200,9 @@ public class CommandLauncher extends ComputerLauncher {
         }
 
         public FormValidation doCheckCommand(@QueryParameter String value) {
+            if (!Jenkins.getInstance().hasPermission(Jenkins.RUN_SCRIPTS)) {
+                return FormValidation.warning(Messages.CommandLauncher_cannot_be_configured_by_non_administrato());
+            }
             if(Util.fixEmptyAndTrim(value)==null)
                 return FormValidation.error(Messages.CommandLauncher_NoLaunchCommand());
             else
