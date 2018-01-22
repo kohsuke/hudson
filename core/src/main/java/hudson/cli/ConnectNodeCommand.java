@@ -53,51 +53,51 @@ public class ConnectNodeCommand extends CLICommand {
 
     @Override
     public String getShortDescription() {
-        return Messages.ConnectNodeCommand_ShortDescription();
+	return Messages.ConnectNodeCommand_ShortDescription();
     }
 
     @Override
     protected int run() throws Exception {
-        boolean errorOccurred = false;
-        final Jenkins jenkins = Jenkins.getActiveInstance();
+	boolean errorOccurred = false;
+	final Jenkins jenkins = Jenkins.getActiveInstance();
 
-        final HashSet<String> hs = new HashSet<String>();
-        hs.addAll(nodes);
+	final HashSet<String> hs = new HashSet<String>();
+	hs.addAll(nodes);
 
-        List<String> names = null;
+	List<String> names = null;
 
-        for (String node_s : hs) {
-            Computer computer = null;
+	for (String node_s : hs) {
+	    Computer computer = null;
 
-            try {
-                computer = jenkins.getComputer(node_s);
+	    try {
+		computer = jenkins.getComputer(node_s);
 
-                if(computer == null) {
-                    if(names == null) {
-                        names = ComputerSet.getComputerNames();
-                    }
-                    String adv = EditDistance.findNearest(node_s, names);
-                    throw new IllegalArgumentException(adv == null ?
-                            hudson.model.Messages.Computer_NoSuchSlaveExistsWithoutAdvice(node_s) :
-                            hudson.model.Messages.Computer_NoSuchSlaveExists(node_s, adv));
-                }
+		if(computer == null) {
+		    if(names == null) {
+			names = ComputerSet.getComputerNames();
+		    }
+		    String adv = EditDistance.findNearest(node_s, names);
+		    throw new IllegalArgumentException(adv == null ?
+			    hudson.model.Messages.Computer_NoSuchSlaveExistsWithoutAdvice(node_s) :
+			    hudson.model.Messages.Computer_NoSuchSlaveExists(node_s, adv));
+		}
 
-                computer.cliConnect(force);
-            } catch (Exception e) {
-                if (hs.size() == 1) {
-                    throw e;
-                }
+		computer.cliConnect(force);
+	    } catch (Exception e) {
+		if (hs.size() == 1) {
+		    throw e;
+		}
 
-                final String errorMsg = String.format(node_s + ": " + e.getMessage());
-                stderr.println(errorMsg);
-                errorOccurred = true;
-                continue;
-            }
-        }
+		final String errorMsg = String.format(node_s + ": " + e.getMessage());
+		stderr.println(errorMsg);
+		errorOccurred = true;
+		continue;
+	    }
+	}
 
-        if (errorOccurred) {
-            throw new AbortException("Error occured while performing this command, see previous stderr output.");
-        }
-        return 0;
+	if (errorOccurred) {
+	    throw new AbortException("Error occurred while performing this command, see previous stderr output.");
+	}
+	return 0;
     }
 }
